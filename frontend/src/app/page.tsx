@@ -9,8 +9,9 @@ const PdfViewer = dynamic(() => import("@/components/PdfViewer"), { ssr: false }
 
 export default function Home() {
   const [file, setFile] = useState<File | null>(null);
-  const [result, setResult] = useState<any>(null);
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL;
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
     if (acceptedFiles?.length) setFile(acceptedFiles[0]);
@@ -29,11 +30,21 @@ export default function Home() {
 
   const upload = async () => {
     if (!file) return;
-    const fd = new FormData();
-    fd.append("file", file);
-    const res = await fetch(`${apiUrl}/files/upload`, { method: "POST", body: fd });
-    const json = await res.json();
-    setResult(json);
+    setError(null);
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch(`${apiUrl}/files/upload`, { method: "POST", body: fd });
+      const json = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(json?.message || `Yükleme başarısız: ${res.status}`);
+      }
+    } catch (e: any) {
+      setError(e?.message || "Bilinmeyen yükleme hatası");
+    } finally {
+      setUploading(false);
+    }
   };
 
   return (
@@ -67,16 +78,14 @@ export default function Home() {
 
       <button
         onClick={upload}
-        disabled={!file}
+        disabled={!file || uploading}
         className="mt-6 px-4 py-2 rounded-xl bg-white text-black disabled:opacity-50"
       >
-        Yükle
+        {uploading ? "Yükleniyor..." : "Yükle"}
       </button>
 
-      {result && (
-        <pre className="mt-6 p-4 bg-neutral-100 rounded-xl overflow-auto text-sm text-black">
-{JSON.stringify(result, null, 2)}
-        </pre>
+      {error && (
+        <div className="mt-4 p-3 rounded bg-red-100 text-red-700">{error}</div>
       )}
     </main>
   );

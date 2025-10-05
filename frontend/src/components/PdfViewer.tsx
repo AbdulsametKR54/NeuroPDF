@@ -17,6 +17,7 @@ export default function PdfViewer({ file, height = 700 }: Props) {
   const [numPages, setNumPages] = useState(0);
   const [scale, setScale] = useState(1.2);
   const [page, setPage] = useState(1);
+  const [pageInput, setPageInput] = useState("1");
 
   // Blob URL’ünü güvenli şekilde yönet
   const [objectUrl, setObjectUrl] = useState<string | null>(null);
@@ -54,6 +55,10 @@ export default function PdfViewer({ file, height = 700 }: Props) {
     };
   }, [file]); // dikkat: fileSource yok, sadece file
 
+  useEffect(() => {
+    setPageInput(String(page));
+  }, [page]);
+
   return (
     <div className="w-full">
       {/* Kontroller */}
@@ -73,9 +78,43 @@ export default function PdfViewer({ file, height = 700 }: Props) {
           Sonraki →
         </button>
 
-        <span className="ml-2">
-          Sayfa: {page}/{numPages || "?"}
-        </span>
+        <div className="ml-2 flex items-center gap-2">
+          <span>Sayfa: {page}/{numPages || "?"}</span>
+          <input
+            type="number"
+            className="w-20 px-2 py-1 rounded bg-neutral-800 text-white border border-neutral-700"
+            min={1}
+            max={numPages || 1}
+            value={pageInput}
+            onChange={(e) => {
+              const v = e.target.value;
+              if (/^\d*$/.test(v)) setPageInput(v);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                const n = parseInt(pageInput, 10);
+                if (!Number.isNaN(n)) {
+                  const clamped = Math.min(Math.max(1, n), numPages || 1);
+                  setPage(clamped);
+                }
+              }
+            }}
+            disabled={!numPages}
+          />
+          <button
+            className="px-3 py-1 rounded-xl bg-neutral-800 text-white disabled:opacity-50"
+            onClick={() => {
+              const n = parseInt(pageInput, 10);
+              if (!Number.isNaN(n)) {
+                const clamped = Math.min(Math.max(1, n), numPages || 1);
+                setPage(clamped);
+              }
+            }}
+            disabled={!numPages}
+          >
+            Git
+          </button>
+        </div>
 
         <div className="ml-auto flex items-center gap-2">
           <button
@@ -109,6 +148,7 @@ export default function PdfViewer({ file, height = 700 }: Props) {
             onLoadSuccess={({ numPages }) => {
               setNumPages(numPages);
               setPage(1);
+              setPageInput("1");
             }}
             loading={<div className="p-6">Yükleniyor…</div>}
             error={<div className="p-6 text-red-400">PDF yüklenemedi.</div>}
