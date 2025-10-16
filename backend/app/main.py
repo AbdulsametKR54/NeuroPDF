@@ -1,7 +1,9 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from .config import settings
-from .routers import  files
+
+from app.config import settings
+# --- DEĞİŞİKLİK: 'guest' router'ı buraya import edildi ---
+from app.routers import auth, guest
 
 app = FastAPI(title=settings.API_NAME)
 
@@ -13,5 +15,5 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-app.include_router(files.router)
+app.include_router(auth.router)
+app.include_router(guest.router)

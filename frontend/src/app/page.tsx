@@ -1,92 +1,59 @@
 "use client";
 
-import { useCallback, useState } from "react";
-import { useDropzone } from "react-dropzone";
-import dynamic from "next/dynamic";
+import { useSession, signIn, signOut } from "next-auth/react";
+import { useRouter } from "next/navigation";
 
-// SSR sorunlarını önlemek için dinamik import (SADECE bu olsun)
-const PdfViewer = dynamic(() => import("@/components/PdfViewer"), { ssr: false });
+export default function HomePage() {
+  const { data: session, status } = useSession();
+  const router = useRouter();
 
-export default function Home() {
-  const [file, setFile] = useState<File | null>(null);
-  const [uploading, setUploading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-
-  const onDrop = useCallback((acceptedFiles: File[]) => {
-    if (acceptedFiles?.length) setFile(acceptedFiles[0]);
-  }, []);
-
-  const { getRootProps, getInputProps, isDragActive } = useDropzone({
-    onDrop,
-    multiple: false,
-    accept: { "application/pdf": [".pdf"] },
-  });
-
-  const handleSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0];
-    if (f) setFile(f);
-  };
-
-  const upload = async () => {
-    if (!file) return;
-    setError(null);
-    setUploading(true);
-    try {
-      const fd = new FormData();
-      fd.append("file", file);
-      const res = await fetch(`${apiUrl}/files/upload`, { method: "POST", body: fd });
-      const json = await res.json().catch(() => null);
-      if (!res.ok) {
-        throw new Error(json?.message || `Yükleme başarısız: ${res.status}`);
-      }
-    } catch (e: any) {
-      setError(e?.message || "Bilinmeyen yükleme hatası");
-    } finally {
-      setUploading(false);
-    }
+  const handleUpload = () => {
+    if (session) router.push("/upload");
+    else signIn("google");
   };
 
   return (
-    <main className="min-h-screen p-6 max-w-4xl mx-auto font-bold">
-      <h1 className="text-3xl mb-6">PDF AI — Yükleme Demo</h1>
+    <main className="flex flex-col items-center justify-center min-h-screen bg-neutral-950 text-white p-6">
+      <div className="text-center max-w-lg">
+        <h1 className="text-4xl font-bold mb-4">📄 PDF-AI</h1>
+        <p className="text-gray-300 mb-8 leading-relaxed">
+          PDF belgelerini yükle, yapay zeka ile özetle ve analiz et.  
+          Hızlı, güvenli ve kolay bir deneyim seni bekliyor.
+        </p>
 
-      <div
-        {...getRootProps()}
-        className={`border-2 border-dashed rounded-2xl p-10 text-center cursor-pointer transition
-          ${isDragActive ? "bg-neutral-800" : "bg-neutral-900"}`}
-      >
-        <input {...getInputProps()} />
-        {isDragActive ? <p>Dosyayı bırakın…</p> : <p>PDF’yi buraya sürükleyip bırakın veya tıklayıp seçin</p>}
+        <div className="flex flex-col sm:flex-row gap-4 justify-center">
+          {!session ? (
+            <button
+              onClick={() => signIn("google")}
+              className="px-5 py-3 rounded-xl bg-blue-500 hover:bg-blue-600 transition"
+            >
+              Google ile Giriş Yap
+            </button>
+          ) : (
+            <button
+              onClick={() => signOut()}
+              className="px-5 py-3 rounded-xl bg-gray-700 hover:bg-gray-600 transition"
+            >
+              Çıkış Yap ({session.user?.name?.split(" ")[0]})
+            </button>
+          )}
+
+          <button
+            onClick={handleUpload}
+            className="px-5 py-3 rounded-xl bg-green-500 hover:bg-green-600 transition"
+          >
+            PDF Yükleme Sayfası
+          </button>
+        </div>
+
+        <p className="mt-8 text-sm text-gray-500">
+          {status === "loading"
+            ? "Oturum bilgisi kontrol ediliyor..."
+            : session
+            ? `Giriş yapıldı: ${session.user?.email}`
+            : "Henüz giriş yapmadın."}
+        </p>
       </div>
-
-      <div className="mt-4">
-        <input type="file" accept="application/pdf" onChange={handleSelect} />
-      </div>
-
-      {file && (
-        <>
-          <div className="mt-4 text-sm">
-            Seçilen: <b>{file.name}</b> ({Math.round(file.size / 1024)} KB)
-          </div>
-
-          <div className="mt-6">
-            <PdfViewer file={file} height={750} />
-          </div>
-        </>
-      )}
-
-      <button
-        onClick={upload}
-        disabled={!file || uploading}
-        className="mt-6 px-4 py-2 rounded-xl bg-white text-black disabled:opacity-50"
-      >
-        {uploading ? "Yükleniyor..." : "Yükle"}
-      </button>
-
-      {error && (
-        <div className="mt-4 p-3 rounded bg-red-100 text-red-700">{error}</div>
-      )}
     </main>
   );
 }
