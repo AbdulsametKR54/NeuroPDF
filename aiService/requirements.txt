@@ -1,0 +1,12 @@
+# FastAPI sunucusu için
+fastapi
+uvicorn[standard]
+python-multipart
+celery
+redis
+google-generativeai
+PyPDF2
+zemberek-python
+httpx
+pydantic-settings  
+python-dotenv

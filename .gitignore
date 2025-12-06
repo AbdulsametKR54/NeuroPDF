@@ -1,0 +1,31 @@
+# === Environment Files ===
+backend/.env
+frontend/.env.local
+aiService/.env
+*.env
+
+# === Python Virtual Environments ===
+backend/.venv/
+aiService/.venv/
+
+# === Node.js Dependencies & Build ===
+frontend/node_modules/
+frontend/.next/
+frontend/.turbo/
+
+# === Python Cache ===
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# === Logs ===
+*.log
+
+# === IDE / Config Folders ===
+.vscode/
+.idea/
+
+# === OS Junk Files ===
+.DS_Store
+Thumbs.db
