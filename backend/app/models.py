@@ -8,9 +8,10 @@ class User(Base):
     __tablename__ = "users"
     id: Mapped[str] = mapped_column(primary_key=True, server_default=text("gen_random_uuid()"))
     provider: Mapped[str] = mapped_column(String(50), nullable=False)
-    provider_user_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    provider_user_id: Mapped[str] = mapped_column(String(255), nullable=True)
     email: Mapped[str | None] = mapped_column(String(320), unique=True, index=True)
     username: Mapped[str | None] = mapped_column(String(50), unique=True, index=True)
+    password: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
 class GuestSession(Base):
     __tablename__ = "guest_sessions"

@@ -1,10 +1,12 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
-import Providers from "./Providers";
 
-const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
-const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
+import Providers from "./Providers"; // global providers (theme, session vs.)
+import NavBar from "@/components/NavBar";
+import ClientPdfPanel from "@/components/ClientPdfPanel";
+
+import { PdfProvider } from "@/context/PdfContext";
+import { LanguageProvider } from "@/context/LanguageContext";
 
 export const metadata: Metadata = {
   title: "PDF-AI",
@@ -14,8 +16,38 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="tr">
-      <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
-        <Providers>{children}</Providers>
+      <body
+        className={
+          "antialiased transition-colors duration-300 bg-[var(--background)] text-[var(--foreground)]"
+        }
+      >
+        {/* Global Providers burada olmalı */}
+        <Providers>
+          {/* Dil yönetimi */}
+          <LanguageProvider>
+            {/* PDF yönetimi */}
+            <PdfProvider>
+              {/* Navbar */}
+              <NavBar />
+
+              {/* Content + Sağ Panel */}
+              <div
+                className="flex min-h-screen"
+                style={{ paddingTop: "var(--navbar-height)" }} // Navbar yüksekliği dinamik
+              >
+                {/* SOL: Sayfa içeriği */}
+                <main className="flex-1 flex flex-col min-w-0 px-4 md:px-6">
+                  {children}
+                </main>
+
+                {/* SAĞ: PDF Panel - desktop'ta görünür, mobile’da gizli */}
+                <div className="hidden lg:block">
+                  <ClientPdfPanel />
+                </div>
+              </div>
+            </PdfProvider>
+          </LanguageProvider>
+        </Providers>
       </body>
     </html>
   );

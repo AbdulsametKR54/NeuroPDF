@@ -1,4 +1,5 @@
 // src/services/guestService.ts
+// ✅ DÜZELTME: createSession metodu POST olmalı
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
@@ -34,18 +35,22 @@ class GuestService {
   }
 
   /**
-   * Sunucuda guest session oluştur
+   * ✅ DÜZELTME: Sunucuda guest session oluştur
    */
   async createSession(): Promise<GuestSession> {
     try {
+      console.log('🔄 Creating new guest session...');
+      
       const response = await fetch(`${API_BASE_URL}/guest/session`, {
-        method: 'POST',
+        method: 'POST',  // ✅ POST olmalı!
         headers: {
           'Content-Type': 'application/json'
         }
       });
 
       if (!response.ok) {
+        const errorText = await response.text();
+        console.error('❌ Session creation failed:', response.status, errorText);
         throw new Error('Failed to create guest session');
       }
 
@@ -57,6 +62,7 @@ class GuestService {
       }
       
       console.log('✅ New guest session created:', this.guestId);
+      console.log('📊 Initial usage:', data);
       return data;
     } catch (error) {
       console.error('❌ Error creating guest session:', error);
@@ -69,30 +75,37 @@ class GuestService {
    */
   async getGuestId(): Promise<string> {
     if (!this.guestId) {
+      console.log('⚠️ No guest ID found, creating new session...');
       await this.createSession();
     }
     return this.guestId!;
   }
 
   /**
-   * Kullanım durumunu kontrol et
-   * İşlem yapmadan önce çağrılır
+   * ✅ DÜZELTME: Kullanım durumunu kontrol et
    */
   async checkUsage(): Promise<UsageCheck> {
     try {
       const guestId = await this.getGuestId();
       
+      console.log('🔍 Checking usage for guest:', guestId);
+      
       const response = await fetch(`${API_BASE_URL}/guest/check-usage`, {
+        method: 'GET',  // ✅ GET doğru
         headers: {
           'X-Guest-ID': guestId
         }
       });
 
       if (!response.ok) {
+        const errorText = await response.text();
+        console.error('❌ Usage check failed:', response.status, errorText);
         throw new Error('Failed to check usage');
       }
 
-      return await response.json();
+      const result = await response.json();
+      console.log('✅ Usage check result:', result);
+      return result;
     } catch (error) {
       console.error('❌ Error checking guest usage:', error);
       throw error;
@@ -100,27 +113,31 @@ class GuestService {
   }
 
   /**
-   * Kullanım sayısını artır
-   * PDF download edildikten sonra çağrılır
+   * ✅ DÜZELTME: Kullanım sayısını artır
    */
   async incrementUsage(): Promise<UsageCheck> {
     try {
       const guestId = await this.getGuestId();
       
+      console.log('➕ Incrementing usage for guest:', guestId);
+      
       const response = await fetch(`${API_BASE_URL}/guest/use`, {
-        method: 'POST',
+        method: 'POST',  // ✅ POST doğru
         headers: {
-          'X-Guest-ID': guestId
+          'X-Guest-ID': guestId,
+          'Content-Type': 'application/json'
         }
       });
 
       if (!response.ok) {
         const error = await response.json();
+        console.error('❌ Increment failed:', error);
         throw new Error(error.detail || 'Usage limit reached');
       }
 
       const result = await response.json();
-      console.log('📊 Guest usage updated:', result);
+      console.log('✅ Usage incremented:', result);
+      console.log(`📊 Status: ${result.usage_count}/${result.usage_count + result.remaining_usage} used`);
       return result;
     } catch (error) {
       console.error('❌ Error incrementing usage:', error);
@@ -130,11 +147,12 @@ class GuestService {
 
   /**
    * Guest session'ı temizle
-   * Kullanıcı giriş yaptığında çağrılır
    */
   async clearSession(): Promise<void> {
     try {
       if (!this.guestId) return;
+
+      console.log('🗑️ Clearing guest session:', this.guestId);
 
       await fetch(`${API_BASE_URL}/guest/session`, {
         method: 'DELETE',
@@ -156,18 +174,15 @@ class GuestService {
 
   /**
    * ✅ GÜNCELLEME: NextAuth session kontrolü
-   * Kullanıcı giriş yapmış mı kontrol et
-   * NOT: Bu fonksiyon artık client-side'da useSession hook'u ile kullanılmalı
    */
   isLoggedIn(): boolean {
     if (typeof window === 'undefined') return false;
     
     // NextAuth session bilgisini kontrol et
     // Bu bilgi client component'lerde useSession() ile alınmalı
-    // Bu fonksiyon artık deprecated - useSession kullanın
     console.warn('⚠️ guestService.isLoggedIn() deprecated. Use useSession() from next-auth/react instead.');
     
-    return false; // Her zaman false döndür, çünkü session bilgisi hook ile alınmalı
+    return false;
   }
 
   /**

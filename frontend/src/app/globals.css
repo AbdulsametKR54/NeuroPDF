@@ -1,27 +1,127 @@
+/* --- Global.css --- */
 @import "tailwindcss";
 
+/* --- Açık Mod --- */
 :root {
   --background: #ffffff;
-  --foreground: #171717;
+  --foreground: #111111;
+  --navbar-bg: #ffffff;
+  --navbar-border: #e5e7eb;
+
+  --button-bg: #ef4444;
+  --button-text: #ffffff;
+
+  --container-bg: #ffffff;
+  --container-border: #e5e7eb;
+  --card-shadow: 0 10px 15px rgba(0,0,0,0.05);
+
+  --font-sans: var(--font-geist-sans, "Nunito", "Inter", Helvetica, sans-serif);
+  --font-mono: var(--font-geist-mono, monospace);
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+/* --- Koyu Mod --- */
+.dark {
+  --background: #1e1b2c;       /* Sayfa arka plan */
+  --foreground: #f0f0f0;       /* Genel yazı rengi */
+  --navbar-bg: #2a2540;        /* Navbar arka plan */
+  --navbar-border: #3b3655;
+
+  --button-bg: #fbbf24;        /* Buton arka plan (altın) */
+  --button-text: #1e1b2c;      /* Buton yazı rengi */
+
+  --container-bg: #2a2540;     /* Card arka plan */
+  --container-border: #3b3655;
+  --card-shadow: 0 10px 15px rgba(0,0,0,0.3);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+@layer components {
+  /* ✅ ÖZEL BUTON SINIFI: Senin değişkenlerini kullanır */
+  .btn-primary {
+    background-color: var(--button-bg);
+    color: var(--button-text);
+    padding: 0.5rem 1.25rem;
+    border-radius: 0.75rem;
+    font-weight: 600;
+    transition: all 0.2s ease-in-out;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
   }
 }
 
+/* --- Body --- */
 body {
-  background: var(--background);
+  background-color: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans);
+  font-weight: 600;
+  margin: 0;
+  padding: 0;
+  transition: background-color 0.3s, color 0.3s;
+}
+
+/* --- Navbar --- */
+header {
+  background-color: var(--navbar-bg);
+  border-bottom: 1px solid var(--navbar-border);
+  transition: background-color 0.3s, border-color 0.3s;
+}
+
+/* --- Card --- */
+.container-card {
+  background: var(--container-bg);
+  color: var(--foreground);
+  border: 1px solid var(--container-border);
+  border-radius: 1rem;
+  box-shadow: var(--card-shadow);
+  transition: background-color 0.3s, color 0.3s, box-shadow 0.3s;
+}
+
+/* --- Button --- */
+button {
+  background-color: var(--button-bg);
+  color: var(--button-text);
+  border: none;
+  padding: 0.5rem 1rem;
   font-weight: 700;
+  cursor: pointer;
+  border-radius: 0.75rem;
+  transition: background-color 0.2s, transform 0.2s, box-shadow 0.2s;
+}
+
+button:hover {
+  filter: brightness(90%);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* --- Özel Butonlar --- */
+button.bg-red-600 {
+  background-color: #ef4444;
+}
+button.bg-red-600:hover {
+  background-color: #dc2626;
+}
+
+button.bg-gray-600 {
+  background-color: #4b5563;
+  color: #ffffff;
+}
+button.bg-gray-600:hover {
+  background-color: #374151;
+}
+
+/* --- React-PDF --- */
+.react-pdf__Page {
+  margin: 0 auto;
+  display: flex;
+  justify-content: center;
+}
+.react-pdf__Page__canvas {
+  margin: 0 auto;
+  display: block;
 }
