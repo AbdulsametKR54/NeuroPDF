@@ -26,12 +26,12 @@ export default function AuthBar() {
         </span>
         
         {/* Çıkış Yap Butonu */}
-        {/* Bu buton 'secondary' (ikincil) aksiyon olduğu için global primary stilini eziyoruz */}
         <button
           onClick={() => signOut()}
-          className="px-3 py-2 text-xs font-bold text-red-600 bg-transparent border border-red-200 dark:border-red-800 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors whitespace-nowrap shadow-none"
-          // Global button stilinden gelen arka planı ezmek için style ekledik
-          style={{ backgroundColor: 'transparent', color: '#dc2626' }} 
+          // whitespace-nowrap: Tek satırda kalmasını garanti eder
+          className="px-4 py-2 text-xs sm:text-sm font-bold rounded-xl border transition-all shadow-sm whitespace-nowrap
+                     text-red-600 border-red-200 bg-red-50 hover:bg-red-100 
+                     dark:text-red-400 dark:border-red-900 dark:bg-red-900/10 dark:hover:bg-red-900/30"
         >
           {t('signOut')}
         </button>

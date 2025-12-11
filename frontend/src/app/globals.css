@@ -11,6 +11,12 @@
   --button-bg: #ef4444;
   --button-text: #ffffff;
 
+  /* ✅ YENİ: Bilgi/Uyarı Kutusu (Açık Mod) */
+  /* Arka plan çok açık mavi, yazı çok koyu lacivert (okunabilirlik için) */
+  --info-bg: #eff6ff;
+  --info-text: #172554; 
+  --info-border: #bfdbfe;
+
   --container-bg: #ffffff;
   --container-border: #e5e7eb;
   --card-shadow: 0 10px 15px rgba(0,0,0,0.05);
@@ -21,32 +27,48 @@
 
 /* --- Koyu Mod --- */
 .dark {
-  --background: #1e1b2c;       /* Sayfa arka plan */
-  --foreground: #f0f0f0;       /* Genel yazı rengi */
-  --navbar-bg: #2a2540;        /* Navbar arka plan */
+  --background: #1e1b2c;
+  --foreground: #f0f0f0;
+  --navbar-bg: #2a2540;
   --navbar-border: #3b3655;
 
-  --button-bg: #fbbf24;        /* Buton arka plan (altın) */
-  --button-text: #1e1b2c;      /* Buton yazı rengi */
+  --button-bg: #fbbf24;
+  --button-text: #1e1b2c;
 
-  --container-bg: #2a2540;     /* Card arka plan */
+  /* ✅ YENİ: Bilgi/Uyarı Kutusu (Koyu Mod) */
+  --info-bg: rgba(30, 58, 138, 0.3);
+  --info-text: #dbeafe;
+  --info-border: #1e3a8a;
+
+  --container-bg: #2a2540;
   --container-border: #3b3655;
   --card-shadow: 0 10px 15px rgba(0,0,0,0.3);
 }
 
 @layer components {
-  /* ✅ ÖZEL BUTON SINIFI: Senin değişkenlerini kullanır */
+  /* ✅ ÖZEL BUTON SINIFI */
   .btn-primary {
     background-color: var(--button-bg);
     color: var(--button-text);
     padding: 0.5rem 1.25rem;
     border-radius: 0.75rem;
-    font-weight: 600;
+    font-weight: 700;
     transition: all 0.2s ease-in-out;
     display: inline-flex;
     align-items: center;
     justify-content: center;
     box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+  }
+
+  /* ✅ YENİ: BİLGİ KUTUSU SINIFI */
+  .info-box {
+    background-color: var(--info-bg);
+    color: var(--info-text);
+    border: 1px solid var(--info-border);
+    border-radius: 0.75rem;
+    padding: 1rem;
+    font-size: 0.875rem; /* text-sm */
+    font-weight: 600;    /* font-medium/bold arası */
   }
 }
 
@@ -97,22 +119,6 @@ button:hover {
 button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
-}
-
-/* --- Özel Butonlar --- */
-button.bg-red-600 {
-  background-color: #ef4444;
-}
-button.bg-red-600:hover {
-  background-color: #dc2626;
-}
-
-button.bg-gray-600 {
-  background-color: #4b5563;
-  color: #ffffff;
-}
-button.bg-gray-600:hover {
-  background-color: #374151;
 }
 
 /* --- React-PDF --- */
