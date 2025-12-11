@@ -12,6 +12,7 @@ class User(Base):
     email: Mapped[str | None] = mapped_column(String(320), unique=True, index=True)
     username: Mapped[str | None] = mapped_column(String(50), unique=True, index=True)
     password: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    eula_accepted: Mapped[bool] = mapped_column(default=False, nullable=False)
 
 class GuestSession(Base):
     __tablename__ = "guest_sessions"

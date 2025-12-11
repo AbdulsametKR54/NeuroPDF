@@ -9,14 +9,14 @@ import { guestService } from "@/services/guestService";
 import { useGuestLimit } from "@/hooks/useGuestLimit";
 import UsageLimitModal from "@/components/UsageLimitModal";
 import { usePdf } from "@/context/PdfContext";
-import { useLanguage } from "@/context/LanguageContext"; // <--- 1. Import
+import { useLanguage } from "@/context/LanguageContext";
 
 const PdfViewer = dynamic(() => import("@/components/PdfViewer"), { ssr: false });
 
 export default function ExtractPdfPage() {
   const { data: session } = useSession();
   const { pdfFile, savePdf } = usePdf();
-  const { t } = useLanguage(); // <--- 2. Hook
+  const { t } = useLanguage();
   
   const [file, setFile] = useState<File | null>(null);
   const [processedBlob, setProcessedBlob] = useState<Blob | null>(null);
@@ -27,7 +27,6 @@ export default function ExtractPdfPage() {
 
   const { usageInfo, showLimitModal, checkLimit, closeLimitModal, redirectToLogin } = useGuestLimit();
 
-  // --- Dosya ekleme (Sürükle Bırak) ---
   const onDrop = useCallback((acceptedFiles: File[]) => {
     if (acceptedFiles?.length) {
       setFile(acceptedFiles[0]);
@@ -43,7 +42,6 @@ export default function ExtractPdfPage() {
     accept: { "application/pdf": [".pdf"] },
   });
 
-  // --- Sağ Panelden Dosya Ekleme ---
   const handleDropFromPanel = (e?: React.DragEvent<HTMLDivElement> | React.MouseEvent<HTMLButtonElement>) => {
     if (pdfFile) {
         setFile(pdfFile);
@@ -55,7 +53,7 @@ export default function ExtractPdfPage() {
             e.preventDefault();
         }
     } else {
-        setError(t('panelPdfError')); // <--- Çeviri
+        setError(t('panelPdfError'));
     }
   };
 
@@ -76,11 +74,11 @@ export default function ExtractPdfPage() {
 
   const handleExtractPages = async () => {
     if (!file) {
-      setError(t('uploadFirst')); // <--- Çeviri
+      setError(t('uploadFirst'));
       return;
     }
     if (!pageRange.trim()) {
-      setError(t('enterPageRangeError')); // <--- Çeviri
+      setError(t('enterPageRangeError'));
       return;
     }
 
@@ -108,9 +106,14 @@ export default function ExtractPdfPage() {
 
       const blob = await response.blob();
       setProcessedBlob(blob);
+
+      const safePageRange = pageRange.trim().replace(/[^a-zA-Z0-9-]/g, '_');
+      const filename = file.name.replace('.pdf', `_extracted_${safePageRange}.pdf`);
+      savePdf(new File([blob], filename, { type: 'application/pdf' }));
+
     } catch (e: any) {
       console.error("Sayfa Çıkarma Hatası:", e);
-      setError(e?.message || t('error')); // <--- Çeviri
+      setError(e?.message || t('error'));
     } finally {
       setExtracting(false);
     }
@@ -143,23 +146,19 @@ export default function ExtractPdfPage() {
     try {
       const apiToken = (session as any)?.apiToken;
       if (!apiToken) throw new Error(t('authRequiredToken'));
+      
       const safePageRange = pageRange.trim().replace(/[^a-zA-Z0-9-]/g, '_');
       const filename = file?.name.replace('.pdf', `_pages_${safePageRange}.pdf`) || 'extracted.pdf';
+      
       const result = await pdfService.saveProcessed(processedBlob, filename, apiToken);
       alert(`${t('saveSuccess')}\n${t('fileSize')}: ${result.size_kb} KB`);
+      
       savePdf(new File([processedBlob], filename, { type: 'application/pdf' }));
     } catch (e: any) {
       setError(e?.message || t('saveError'));
     } finally {
       setSaving(false);
     }
-  };
-
-  const handleDevamEt = () => {
-    if (!processedBlob) return;
-    savePdf(new File([processedBlob], 'extracted.pdf', { type: 'application/pdf' }));
-    alert(t('pdfAddedToPanel')); // <--- Çeviri
-    handleNew();
   };
 
   const handleNew = () => {
@@ -177,7 +176,7 @@ export default function ExtractPdfPage() {
       <h1 className="text-3xl mb-6 tracking-tight">{t('extractPageTitle')}</h1>
 
       {usageInfo && !showLimitModal && !session && (
-        <div className="mb-4 p-4 rounded-xl bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-200 border border-blue-200 dark:border-blue-800 text-sm font-medium">
+        <div className="info-box mb-4">
             {usageInfo.message}
         </div>
       )}
@@ -186,10 +185,10 @@ export default function ExtractPdfPage() {
       <div
         {...getRootProps()}
         onDrop={handleDropFromPanel} 
-        className={`border-2 border-dashed rounded-2xl p-10 text-center cursor-pointer transition-all duration-300
+        className={`container-card border-2 border-dashed rounded-2xl p-10 text-center cursor-pointer transition-all duration-300
           ${isDragActive 
-            ? "border-[var(--button-bg)] bg-[var(--background)] opacity-80" 
-            : "border-[var(--navbar-border)] bg-[var(--container-bg)] hover:border-[var(--button-bg)]"
+            ? "border-[var(--button-bg)] opacity-80 bg-[var(--background)]" 
+            : "border-[var(--navbar-border)] hover:border-[var(--button-bg)]"
           }`}
       >
         <input {...getInputProps()} />
@@ -213,27 +212,10 @@ export default function ExtractPdfPage() {
 
       {/* Butonlar */}
       <div className="mt-6 flex flex-wrap items-center gap-4">
-        <label 
-            className="cursor-pointer inline-flex items-center justify-center px-6 py-3 rounded-xl font-bold transition-transform hover:scale-105 shadow-md"
-            style={{ backgroundColor: 'var(--button-bg)', color: 'var(--button-text)' }}
-        >
+        <label className="btn-primary cursor-pointer shadow-md hover:scale-105">
           {t('selectFile')}
           <input type="file" accept="application/pdf" onChange={handleSelect} className="hidden" />
         </label>
-        
-        {pdfFile && file !== pdfFile && (
-            <button 
-                onClick={() => handleDropFromPanel()}
-                className="px-6 py-3 rounded-xl border transition-colors hover:bg-gray-100 dark:hover:bg-gray-800"
-                style={{
-                    backgroundColor: 'transparent',
-                    borderColor: 'var(--navbar-border)',
-                    color: 'var(--foreground)'
-                }}
-            >
-              {t('usePanelFile')}
-            </button>
-        )}
       </div>
 
       {/* Seçilen Dosya */}
@@ -265,12 +247,13 @@ export default function ExtractPdfPage() {
                 placeholder={t('pageRangePlaceholder')}
                 value={pageRange}
                 onChange={handleRangeChange}
-                className="px-4 py-3 rounded-xl border focus:ring-2 outline-none transition-colors focus:ring-[var(--button-bg)]"
+                className="px-4 py-3 rounded-xl border focus:ring-2 outline-none transition-colors"
                 style={{
                     backgroundColor: 'var(--container-bg)',
                     color: 'var(--foreground)',
-                    borderColor: 'var(--navbar-border)'
-                }}
+                    borderColor: 'var(--navbar-border)',
+                    '--tw-ring-color': 'var(--button-bg)'
+                } as React.CSSProperties}
               />
               
               <p className="text-sm opacity-60 font-normal">
@@ -280,8 +263,7 @@ export default function ExtractPdfPage() {
               <button
                 onClick={handleExtractPages}
                 disabled={!isReady || extracting}
-                className="mt-2 w-full sm:w-auto px-8 py-3 rounded-xl shadow-lg transition-transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed font-bold"
-                style={{ backgroundColor: 'var(--button-bg)', color: 'var(--button-text)' }}
+                className="btn-primary mt-2 w-full sm:w-auto px-8 py-3 shadow-lg hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {extracting ? t('extracting') : t('extractButton')}
               </button>
@@ -294,44 +276,51 @@ export default function ExtractPdfPage() {
       {hasProcessed && processedBlob && (
         <div className="mt-6 space-y-6">
           
-          <div className="rounded-xl overflow-hidden border border-[var(--container-border)] shadow-lg">
-            <div className="p-4 border-b border-[var(--navbar-border)]" style={{ backgroundColor: 'var(--container-bg)' }}>
-                <h3 className="text-xl font-semibold opacity-90">{t('extractedPdfPreviewTitle')}</h3>
+          <div className="container-card p-6">
+            <h3 className="text-xl mb-4 font-semibold">{t('extractedPdfPreviewTitle')}</h3>
+            <div className="rounded-lg overflow-hidden border border-[var(--navbar-border)]">
+                <PdfViewer 
+                    file={new File([processedBlob], file?.name.replace('.pdf', '_extracted.pdf') || 'extracted.pdf', { type: 'application/pdf' })} 
+                    height={550} 
+                />
             </div>
-            <PdfViewer 
-                file={new File([processedBlob], file?.name.replace('.pdf', '_extracted.pdf') || 'extracted.pdf', { type: 'application/pdf' })} 
-                height={550} 
-            />
           </div>
 
-          <div className="p-6 rounded-xl border bg-green-50 text-green-900 border-green-200 dark:bg-green-900/20 dark:text-green-100 dark:border-green-800">
-            <h3 className="text-xl mb-4 font-bold">{t('processSuccess')}</h3>
+          <div className="container-card p-6 border border-gray-300 dark:border-[var(--container-border)] shadow-xl">
+            <h3 className="text-xl mb-4 font-bold flex items-center gap-2" style={{ color: 'var(--foreground)' }}>
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6 text-green-500">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                {t('processSuccess')}
+            </h3>
             
             <div className="flex gap-4 flex-wrap">
-              <button onClick={handleDownload} className="px-6 py-3 rounded-xl bg-blue-600 dark:bg-blue-700 text-white hover:bg-blue-700 dark:hover:bg-blue-600 font-semibold shadow-md transition-transform hover:scale-105">
+              <button onClick={handleDownload} className="btn-primary shadow-md hover:scale-105">
                 {t('download')}
               </button>
               
               {session && (
-                  <button onClick={handleSave} disabled={saving} className="px-6 py-3 rounded-xl bg-green-600 dark:bg-green-700 text-white hover:bg-green-700 dark:hover:bg-green-600 font-semibold shadow-md transition-transform hover:scale-105 disabled:opacity-50">
+                  <button onClick={handleSave} disabled={saving} className="btn-primary shadow-md hover:scale-105 disabled:opacity-50">
                     {saving ? t('saving') : t('saveToFiles')}
                   </button>
               )}
               
-              <button onClick={handleDevamEt} className="px-6 py-3 rounded-xl bg-yellow-500 dark:bg-yellow-600 text-white hover:bg-yellow-600 dark:hover:bg-yellow-500 font-semibold shadow-md transition-transform hover:scale-105">
-                {t('continue')}
-              </button>
-              
-              <button onClick={handleNew} className="px-6 py-3 rounded-xl bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-600 font-semibold shadow-md transition-transform hover:scale-105">
+              <button 
+                onClick={handleNew} 
+                className="btn-primary shadow-md hover:scale-105"
+              >
                 {t('newProcess')}
               </button>
             </div>
+
+            {/* ✅ EKLENDİ: Misafir Kullanıcı Giriş Uyarısı Linki */}
+            {!session && <p className="mt-4 text-sm opacity-80">💡 <a href="/login" className="underline font-bold" style={{ color: 'var(--button-bg)' }}>{t('loginWarning')}</a></p>}
           </div>
         </div>
       )}
 
       {error && (
-        <div className="mt-6 p-4 rounded-xl bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-200 border border-red-200 dark:border-red-800">
+        <div className="mt-6 p-4 rounded-xl border border-red-200 bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-200 dark:border-red-800">
           ⚠️ {error}
         </div>
       )}

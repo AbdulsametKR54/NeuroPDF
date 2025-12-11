@@ -9,14 +9,14 @@ import { guestService } from "@/services/guestService";
 import { useGuestLimit } from "@/hooks/useGuestLimit";
 import UsageLimitModal from "@/components/UsageLimitModal";
 import { usePdf } from "@/context/PdfContext";
-import { useLanguage } from "@/context/LanguageContext"; // <--- 1. Import
+import { useLanguage } from "@/context/LanguageContext";
 
 const PdfViewer = dynamic(() => import("@/components/PdfViewer"), { ssr: false });
 
 export default function ExtractTextPage() {
   const { data: session } = useSession();
   const { pdfFile } = usePdf();
-  const { t } = useLanguage(); // <--- 2. Hook
+  const { t } = useLanguage();
 
   const [file, setFile] = useState<File | null>(null);
   const [processedBlob, setProcessedBlob] = useState<Blob | null>(null);
@@ -92,7 +92,6 @@ export default function ExtractTextPage() {
       const formData = new FormData();
       formData.append('file', file);
 
-      // API URL'ini güvenli hale getir
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
       const response = await fetch(`${apiUrl}/files/convert-text`, {
         method: 'POST',
@@ -159,21 +158,21 @@ export default function ExtractTextPage() {
     <main className="min-h-screen p-6 max-w-4xl mx-auto font-bold text-[var(--foreground)]">
       <h1 className="text-3xl mb-6 tracking-tight">{t('pageTitle')}</h1>
 
-      {/* Usage Info */}
+      {/* ✅ Usage Info: Global info-box sınıfı */}
       {usageInfo && !showLimitModal && !session && (
-        <div className="mb-4 p-4 rounded-xl bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-200 border border-blue-200 dark:border-blue-800 text-sm font-medium">
+        <div className="info-box mb-4">
           {usageInfo.message}
         </div>
       )}
 
-      {/* Dropzone (Sürükle-Bırak) */}
+      {/* ✅ Dropzone: container-card + dashed border */}
       <div
         {...getRootProps()}
         onDrop={handleDropFromPanel} 
-        className={`border-2 border-dashed rounded-2xl p-10 text-center cursor-pointer transition-all duration-300
+        className={`container-card border-2 border-dashed rounded-2xl p-10 text-center cursor-pointer transition-all duration-300
           ${isDragActive 
-            ? "border-[var(--button-bg)] bg-[var(--background)] opacity-80" 
-            : "border-[var(--navbar-border)] bg-[var(--container-bg)] hover:border-[var(--button-bg)]"
+            ? "border-[var(--button-bg)] opacity-80 bg-[var(--background)]" 
+            : "border-[var(--navbar-border)] hover:border-[var(--button-bg)]"
           }`}
       >
         <input {...getInputProps()} />
@@ -194,29 +193,14 @@ export default function ExtractTextPage() {
         )}
       </div>
 
-      {/* Dosya Seç Butonu ve Panel Butonu */}
+      {/* ✅ Butonlar: btn-primary sınıfı */}
       <div className="mt-6 flex flex-wrap items-center gap-4">
-        <label 
-            className="cursor-pointer inline-flex items-center justify-center px-6 py-3 rounded-xl font-bold transition-transform hover:scale-105 shadow-md"
-            style={{ backgroundColor: 'var(--button-bg)', color: 'var(--button-text)' }}
-        >
+        <label className="btn-primary cursor-pointer shadow-md hover:scale-105">
           {t('selectFile')}
           <input type="file" accept="application/pdf" onChange={handleSelect} className="hidden" />
         </label>
         
-        {pdfFile && file !== pdfFile && (
-            <button 
-                onClick={() => handleDropFromPanel()} 
-                className="px-6 py-3 rounded-xl border transition-colors hover:bg-gray-100 dark:hover:bg-gray-800"
-                style={{
-                    backgroundColor: 'transparent',
-                    borderColor: 'var(--navbar-border)',
-                    color: 'var(--foreground)'
-                }}
-            >
-              {t('usePanelFile')}
-            </button>
-        )}
+        {/* Panel Butonu KALDIRILDI */}
       </div>
 
       {file && (
@@ -237,13 +221,12 @@ export default function ExtractTextPage() {
         </>
       )}
 
-      {/* Process Button */}
+      {/* Process Button: btn-primary */}
       {!hasProcessed && (
         <button
           onClick={handleConvertText}
           disabled={!isReady || converting}
-          className="mt-6 w-full sm:w-auto px-8 py-3 rounded-xl shadow-lg transition-transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed"
-          style={{ backgroundColor: 'var(--button-bg)', color: 'var(--button-text)' }}
+          className="btn-primary mt-6 w-full sm:w-auto px-8 py-3 shadow-lg hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {converting ? t('converting') : t('convertText')}
         </button>
@@ -264,21 +247,27 @@ export default function ExtractTextPage() {
                     <p className="text-gray-700 dark:text-gray-300">
                     {t('textReadyMessage')}
                     </p>
-                    <p className="text-gray-500 mt-2">
+                    <p className="text-gray-50 mt-2 opacity-60">
                     {t('fileSize')}: {(processedBlob.size / 1024).toFixed(2)} KB
                     </p>
                 </div>
              </div>
           </div>
 
-          {/* Action Buttons */}
-          <div className="p-6 rounded-xl border bg-green-50 text-green-900 border-green-200 dark:bg-green-900/20 dark:text-green-100 dark:border-green-800">
-            <h3 className="text-xl mb-4 font-bold">{t('processSuccess')}</h3>
+          {/* ✅ Başarı Kartı: Border ve Shadow düzeltildi */}
+          <div className="container-card p-6 border border-gray-300 dark:border-[var(--container-border)] shadow-xl">
+            <h3 className="text-xl mb-4 font-bold flex items-center gap-2" style={{ color: 'var(--foreground)' }}>
+                {/* İkon eklendi */}
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6 text-green-500">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                {t('processSuccess')}
+            </h3>
             
             <div className="flex gap-4 flex-wrap">
               <button
                 onClick={handleDownload}
-                className="px-6 py-3 rounded-xl bg-blue-600 dark:bg-blue-700 text-white hover:bg-blue-700 dark:hover:bg-blue-600 font-semibold shadow-md transition-transform hover:scale-105"
+                className="btn-primary shadow-md hover:scale-105"
               >
                 {t('download')}
               </button>
@@ -287,7 +276,7 @@ export default function ExtractTextPage() {
                 <button
                   onClick={handleSave}
                   disabled={saving}
-                  className="px-6 py-3 rounded-xl bg-green-600 dark:bg-green-700 text-white hover:bg-green-700 dark:hover:bg-green-600 font-semibold shadow-md transition-transform hover:scale-105 disabled:opacity-50"
+                  className="btn-primary shadow-md hover:scale-105 disabled:opacity-50"
                 >
                   {saving ? t('saving') : t('saveToFiles')}
                 </button>
@@ -295,7 +284,7 @@ export default function ExtractTextPage() {
 
               <button
                 onClick={handleNewProcess}
-                className="px-6 py-3 rounded-xl bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-600 font-semibold shadow-md transition-transform hover:scale-105"
+                className="btn-primary shadow-md hover:scale-105"
               >
                 {t('newProcess')}
               </button>
@@ -303,7 +292,7 @@ export default function ExtractTextPage() {
 
             {!session && (
               <p className="mt-4 text-sm opacity-80">
-                💡 <a href="/login" className="underline font-bold">{t('loginWarning')}</a>
+                💡 <a href="/login" className="underline font-bold" style={{ color: 'var(--button-bg)' }}>{t('loginWarning')}</a>
               </p>
             )}
           </div>
@@ -311,7 +300,7 @@ export default function ExtractTextPage() {
       )}
 
       {error && (
-        <div className="mt-6 p-4 rounded-xl bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-200 border border-red-200 dark:border-red-800">
+        <div className="mt-6 p-4 rounded-xl border border-red-200 bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-200 dark:border-red-800">
           ⚠️ {error}
         </div>
       )}

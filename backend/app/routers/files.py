@@ -18,36 +18,50 @@ import re
 import os
 
 # --- ReportLab Importları (PDF Oluşturma İçin) ---
-from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
-from reportlab.lib.utils import simpleSplit
+from reportlab.lib import colors  # Renkler için (colors.grey, colors.black vb.)
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle # Stiller için
+from reportlab.lib.enums import TA_LEFT
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
+# Platypus: Otomatik sayfa düzeni ve Tablo desteği için
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 
 from ..storage import storage_service
 from ..routers.auth import get_current_user
 
 router = APIRouter(prefix="/files", tags=["files"])
 
-# pdfmetrics.registerFont(TTFont('DejaVu', 'DejaVuSans.ttf'))
 # ==========================================
-# FONT AYARLARI (Global Değişken)
+# FONT AYARLARI (Source Sans Pro)
 # ==========================================
-# Varsayılan olarak Helvetica kullan (Dosya gerektirmez, Türkçe karakterleri kare gösterir)
-FONT_NAME = "Helvetica" 
+
+current_file_path = os.path.abspath(__file__)
+routers_dir = os.path.dirname(current_file_path)
+app_dir = os.path.dirname(routers_dir)
+backend_dir = os.path.dirname(app_dir)
+fonts_dir = os.path.join(backend_dir, "fonts", "Source_Sans_Pro")
+
+regular_font_path = os.path.join(fonts_dir, "SourceSansPro-Regular.ttf")
+bold_font_path = os.path.join(fonts_dir, "SourceSansPro-Bold.ttf")
+
+FONT_NAME_REGULAR = "Helvetica" 
+FONT_NAME_BOLD = "Helvetica-Bold"
 
 try:
-    # 'DejaVuSerif.ttf' dosyasını backend klasöründe arıyoruz
-    if os.path.exists("DejaVuSerif.ttf"):
-        pdfmetrics.registerFont(TTFont('DejaVuSerif', 'DejaVuSerif.ttf'))
-        FONT_NAME = 'DejaVuSerif'
-        print("✅ DejaVuSerif fontu başarıyla yüklendi.")
-    elif os.path.exists("arial.ttf"):
-        pdfmetrics.registerFont(TTFont('Arial', 'arial.ttf'))
-        FONT_NAME = 'Arial'
-        print("✅ Arial fontu yüklendi (Yedek).")
+    if os.path.exists(regular_font_path):
+        pdfmetrics.registerFont(TTFont('SourceSansPro-Regular', regular_font_path))
+        FONT_NAME_REGULAR = 'SourceSansPro-Regular'
+        print(f"✅ Normal Font Yüklendi: {regular_font_path}")
+    
+    if os.path.exists(bold_font_path):
+        pdfmetrics.registerFont(TTFont('SourceSansPro-Bold', bold_font_path))
+        FONT_NAME_BOLD = 'SourceSansPro-Bold'
+        print(f"✅ Kalın Font Yüklendi: {bold_font_path}")
     else:
-        print("⚠️ Uyarı: Font dosyası bulunamadı. Varsayılan (Helvetica) kullanılıyor.")
+        if FONT_NAME_REGULAR != "Helvetica":
+            FONT_NAME_BOLD = FONT_NAME_REGULAR
+
 except Exception as e:
     print(f"❌ Font yükleme hatası: {e}")
 
@@ -341,102 +355,156 @@ class MarkdownToPdfRequest(BaseModel):
 @router.post("/markdown-to-pdf")
 async def markdown_to_pdf(request: MarkdownToPdfRequest):
     """
-    Markdown metnini alır, temizler ve formatlı PDF olarak döndürür.
+    Markdown metnini alır, Tabloları ve Türkçe karakterleri işleyerek PDF'e çevirir.
+    Platypus motoru kullanıldığı için sayfa taşmaları ve tablolar otomatik yönetilir.
     """
     try:
-        text_content = request.markdown
-        packet = io.BytesIO()
+        buffer = io.BytesIO()
         
-        c = canvas.Canvas(packet, pagesize=A4)
-        width, height = A4
-        
-        # Sayfa Ayarları
-        margin_x = 50
-        margin_y = 50
-        max_width = width - (2 * margin_x)
-        y_position = height - margin_y
-        
-        # Font Ayarları
-        base_font = FONT_NAME        # Normal Font
-        bold_font = FONT_NAME        # Kalın Font (Aynı fontu kullanıyoruz şimdilik)
-        
-        font_size_normal = 11
-        font_size_header = 14
-        line_height = 16
+        # 1. Doküman Şablonu (Sayfa kenar boşlukları)
+        doc = SimpleDocTemplate(
+            buffer,
+            pagesize=A4,
+            rightMargin=50, leftMargin=50,
+            topMargin=50, bottomMargin=50
+        )
 
-        c.setFont(base_font, font_size_normal)
+        # 2. Stiller
+        styles = getSampleStyleSheet()
+        
+        # Türkçe destekli Normal Stil
+        style_normal = ParagraphStyle(
+            'TurkishNormal',
+            parent=styles['Normal'],
+            fontName=FONT_NAME_REGULAR,
+            fontSize=11,
+            leading=16, # Satır aralığı
+            spaceAfter=8
+        )
 
-        lines = text_content.split('\n')
+        # Başlık Stili
+        style_heading = ParagraphStyle(
+            'TurkishHeading',
+            parent=styles['Heading1'],
+            fontName=FONT_NAME_BOLD,
+            fontSize=14,
+            leading=18,
+            spaceAfter=12,
+            spaceBefore=12,
+            textColor=colors.HexColor("#2c3e50")
+        )
+
+        # Tablo Hücresi Stili (Daha küçük font)
+        style_cell = ParagraphStyle(
+            'TableCell',
+            parent=styles['Normal'],
+            fontName=FONT_NAME_REGULAR,
+            fontSize=10,
+            leading=12
+        )
+
+        # 3. İçerik Oluşturma (Story)
+        story = []
+        lines = request.markdown.split('\n')
+        
+        table_buffer = [] # Tablo satırlarını biriktirmek için
+        in_table = False
 
         for line in lines:
             line = line.strip()
+
+            # --- TABLO ALGILAMA MANTIĞI ---
+            if line.startswith('|'):
+                # Tablo satırı ise
+                in_table = True
+                
+                # Markdown tablosundaki satırı hücrelere böl
+                # Örnek: | Hücre 1 | Hücre 2 | -> ['Hücre 1', 'Hücre 2']
+                cells = [cell.strip() for cell in line.split('|') if cell]
+                
+                # Ayırıcı satır kontrolü (örn: |---|---|)
+                # Eğer satır sadece tire (-) ve iki nokta (:) içeriyorsa bu bir ayırıcıdır, veriye ekleme
+                is_separator = all(re.match(r'^[\s\-:]+$', c) for c in cells)
+                
+                if not is_separator:
+                    # Hücre içindeki metni Paragraph'a çevir (Word Wrap için)
+                    row_data = [Paragraph(cell, style_cell) for cell in cells]
+                    table_buffer.append(row_data)
+                
+                continue # Sonraki satıra geç (Tablo işlemeye devam et)
             
-            # 1. Başlık Kontrolü (#)
+            else:
+                # Eğer tablo modundaysak ve normal satıra geldiysek, TABLOYU OLUŞTUR
+                if in_table and table_buffer:
+                    # Sütun sayısını bul (en geniş satıra göre)
+                    col_count = max(len(row) for row in table_buffer)
+                    # Sayfa genişliği (A4 genişliği - kenar boşlukları)
+                    avail_width = A4[0] - 100 
+                    col_width = avail_width / col_count
+
+                    t = Table(table_buffer, colWidths=[col_width] * col_count)
+                    
+                    # Tablo Stili
+                    t.setStyle(TableStyle([
+                        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#f3f4f6")), # Başlık arkaplanı
+                        ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
+                        ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                        ('FONTNAME', (0, 0), (-1, 0), FONT_NAME_BOLD), # Başlık fontu
+                        ('FONTNAME', (0, 1), (-1, -1), FONT_NAME_REGULAR),
+                        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                        ('GRID', (0, 0), (-1, -1), 0.5, colors.grey), # Izgara çizgileri
+                    ]))
+                    
+                    story.append(t)
+                    story.append(Spacer(1, 12))
+                    
+                    # Buffer'ı temizle
+                    table_buffer = []
+                    in_table = False
+
+            # --- NORMAL METİN İŞLEME ---
+            if not line:
+                continue
+
+            # Başlıklar
             if line.startswith('#'):
-                # Başlık seviyesini temizle (#, ##, ###)
                 clean_line = line.lstrip('#').strip()
-                
-                # Başlık Fontu ve Boşluk
-                c.setFont(bold_font, font_size_header)
-                y_position -= 10 
-                
-                # Başlığı Yaz
-                wrapped = simpleSplit(clean_line, bold_font, font_size_header, max_width)
-                for wl in wrapped:
-                    if y_position < margin_y:
-                        c.showPage()
-                        y_position = height - margin_y
-                    c.drawString(margin_x, y_position, wl)
-                    y_position -= (line_height + 4)
-                
-                # Normale dön
-                c.setFont(base_font, font_size_normal)
-                y_position -= 5
+                story.append(Paragraph(clean_line, style_heading))
                 continue
-
-            # 2. Madde İşaretleri (* veya -)
-            is_bullet = False
+            
+            # Madde İşaretleri
             if line.startswith('* ') or line.startswith('- '):
-                is_bullet = True
-                line = line[2:] # İşareti kaldır
-            
-            # 3. Kalınlık İşaretlerini Temizle (**)
-            # Basit çözüm: Yıldızları sil. (ReportLab'de bold yapmak için HTML tag gerekir, karmaşıktır)
-            clean_line = line.replace('**', '')
+                # Bullet karakteri ekle
+                clean_line = f"• {line[2:]}"
+                # Bold temizliği
+                clean_line = clean_line.replace('**', '')
+                story.append(Paragraph(clean_line, style_normal))
+            else:
+                # Düz metin
+                clean_line = line.replace('**', '')
+                story.append(Paragraph(clean_line, style_normal))
 
-            # Boş satırsa geç
-            if not clean_line:
-                y_position -= (line_height / 2)
-                continue
+        # Döngü bittiğinde hala bekleyen tablo varsa ekle
+        if in_table and table_buffer:
+            col_count = max(len(row) for row in table_buffer)
+            avail_width = A4[0] - 100 
+            col_width = avail_width / col_count
+            t = Table(table_buffer, colWidths=[col_width] * col_count)
+            t.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#f3f4f6")),
+                ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+                ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                ('FONTNAME', (0, 0), (-1, -1), FONT_NAME_REGULAR),
+            ]))
+            story.append(t)
 
-            # 4. Satırı Yazdır (Word Wrap)
-            current_x = margin_x + (15 if is_bullet else 0) # Maddeler içeriden başlar
-            current_max_width = max_width - (15 if is_bullet else 0)
-            
-            wrapped_lines = simpleSplit(clean_line, base_font, font_size_normal, current_max_width)
-
-            for i, wl in enumerate(wrapped_lines):
-                # Sayfa sonu kontrolü
-                if y_position < margin_y:
-                    c.showPage()
-                    c.setFont(base_font, font_size_normal)
-                    y_position = height - margin_y
-
-                # Madde işareti koy (Sadece ilk satıra)
-                if is_bullet and i == 0:
-                    c.drawString(margin_x, y_position, "•")
-
-                c.drawString(current_x, y_position, wl)
-                y_position -= line_height
-            
-            # Paragraf arası hafif boşluk
-            y_position -= 2
-
-        c.save()
-        packet.seek(0)
-
+        # 4. PDF'i Oluştur
+        doc.build(story)
+        
+        buffer.seek(0)
         return StreamingResponse(
-            packet,
+            buffer,
             media_type="application/pdf",
             headers={"Content-Disposition": 'attachment; filename="ozet.pdf"'}
         )

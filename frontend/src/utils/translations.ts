@@ -17,6 +17,9 @@ export const translations = {
     success: "İşlem Başarılı",
     warning: "Uyarı",
 
+    // --- EULA ---
+    eulaTitle: "EULA",
+
     // --- LANDING PAGE (Ana Sayfa) ---
     landingDescription: "PDF belgelerini yükle, yapay zeka ile özetle ve analiz et. Hızlı, güvenli ve kolay bir deneyim seni bekliyor.",
     guestLogin: "Misafir Girişi",
@@ -50,7 +53,7 @@ export const translations = {
     createAccount: "Hemen Oluştur",
 
     // --- UPLOAD PAGE (Yükleme Sayfası) ---
-    uploadPageTitle: "PDF AI — Yükleme",
+    uploadPageTitle: "Neuro PDF — Yükleme",
     guestUploadWarning: "Giriş yaparak dosyalarınızı kalıcı olarak saklayabilirsiniz.",
     userLoggedIn: "Giriş yaptınız:",
     uploadDropActive: "Dosyayı bırakın, yüklemeye hazırlansın...",
@@ -68,7 +71,7 @@ export const translations = {
     selectedFile: "Seçilen:",
 
     // --- CONVERT TEXT PAGE (Metin Dönüştürme Sayfası) ---
-    pageTitle: "PDF AI — PDF'ten Metin Dönüştürücü", // convert-pdf sayfası için
+    pageTitle: "Neuro PDF — PDF'ten Metin Dönüştürücü", // convert-pdf sayfası için
     textConvertedTitle: "📄 Metin Dönüştürüldü:",
     textReadyMessage: "Metin dosyası hazır! İndirerek tüm içeriği görebilirsiniz.",
     converting: "Metin Dönüştürülüyor...",
@@ -77,7 +80,7 @@ export const translations = {
     dropPassive: "PDF'yi buraya sürükleyip bırakın veya aşağıdaki butonlarla seçin", // <--- EKLENDİ (Hata düzeltmesi)
 
     // --- MERGE PAGE (Birleştirme Sayfası) ---
-    mergePageTitle: "PDF AI — PDF Birleştirici",
+    mergePageTitle: "Neuro PDF — PDF Birleştirici",
     mergeMinFilesError: "Lütfen birleştirmek için en az 2 PDF dosyası seçin.",
     addPanelFile: "Sağ Paneldeki PDF'i Ekle",
     selectedFiles: "Seçilen Dosyalar",
@@ -99,7 +102,7 @@ export const translations = {
     pdfAddedToPanel: "✅ PDF sağ panelde görünecek!",
 
     // --- EXTRACT PAGE (Sayfa Çıkarma Sayfası) ---
-    extractPageTitle: "PDF AI — Sayfa Çıkarıcı",
+    extractPageTitle: "Neuro PDF — Sayfa Çıkarıcı",
     extractDropActive: "Dosyayı bırakın, yeni işlem başlatılsın.",
     extractDropPassive: "PDF'yi buraya sürükleyip bırakın veya tıklayıp seçin",
     pagesToExtractLabel: "Çıkarılacak Sayfalar:",
@@ -114,7 +117,7 @@ export const translations = {
     uploadFirst: "Lütfen önce bir PDF dosyası yükleyin.",
 
     // --- EDIT PAGE (Düzenleme/Sıralama Sayfası) ---
-    editPageTitle: "PDF AI — Sayfa Düzenleyici",
+    editPageTitle: "Neuro PDF — Sayfa Düzenleyici",
     editDropActive: "Dosyayı bırakın, yüklensin...",
     editDropPassive: "PDF'yi buraya sürükleyip bırakın veya butonlarla seçin",
     previewDragDrop: "📄 PDF Önizleme — Sayfaları Sürükle & Bırak",
@@ -131,6 +134,8 @@ export const translations = {
     summarizeFailed: "Özetleme başarısız oldu.",
     summarizing: "Özetleniyor...",
     summarizeButton: "Özetle",
+    summaryResultTitle: "Özet Sonucu",
+    waitMessage: "Bu işlem belgenin boyutuna göre biraz zaman alabilir. Lütfen bekleyin.",
     downloadPdf: "PDF Olarak İndir",
     newProcess: "Yeni İşlem",
     summaryResult: "Özet Sonucu",
@@ -143,6 +148,12 @@ export const translations = {
     pdfLoading: "PDF Yükleniyor...",
     pdfError: "PDF görüntülenemedi.",
     page: "Sayfa",
+    
+    // PdfViewer Çevirileri
+    prev: "Önceki",
+    next: "Sonraki",
+    pdfLoadError: "PDF yüklenemedi.",
+    preparingFile: "Dosya hazırlanıyor...",
     
     // --- ORTAK EYLEMLER (Common Actions) ---
     download: "İndir",
@@ -175,6 +186,9 @@ export const translations = {
     error: "An error occurred",
     success: "Success",
     warning: "Warning",
+
+    // --- EULA ---
+    eulaTitle: "EULA",
 
     // --- LANDING PAGE ---
     landingDescription: "Upload PDF documents, summarize and analyze with AI. A fast, secure, and easy experience awaits you.",
@@ -209,7 +223,7 @@ export const translations = {
     createAccount: "Create Now",
 
     // --- UPLOAD PAGE ---
-    uploadPageTitle: "PDF AI — Upload",
+    uploadPageTitle: "Neuro PDF — Upload",
     guestUploadWarning: "Log in to save your files permanently.",
     userLoggedIn: "Logged in as:",
     uploadDropActive: "Drop the file to prepare upload...",
@@ -227,7 +241,7 @@ export const translations = {
     selectedFile: "Selected:",
 
     // --- CONVERT TEXT PAGE ---
-    pageTitle: "PDF AI — PDF to Text Converter",
+    pageTitle: "Neuro PDF — PDF to Text Converter",
     textConvertedTitle: "📄 Text Converted:",
     textReadyMessage: "Text file is ready! You can download to see full content.",
     converting: "Converting Text...",
@@ -236,7 +250,7 @@ export const translations = {
     dropPassive: "Drag & drop PDF here or select using buttons below", // <--- EKLENDİ
 
     // --- MERGE PAGE ---
-    mergePageTitle: "PDF AI — PDF Merger",
+    mergePageTitle: "Neuro PDF — PDF Merger",
     mergeMinFilesError: "Please select at least 2 PDF files to merge.",
     addPanelFile: "Add PDF from Right Panel",
     selectedFiles: "Selected Files",
@@ -258,7 +272,7 @@ export const translations = {
     pdfAddedToPanel: "✅ PDF will appear in the right panel!",
 
     // --- EXTRACT PAGE ---
-    extractPageTitle: "PDF AI — Page Extractor",
+    extractPageTitle: "Neuro PDF — Page Extractor",
     extractDropActive: "Drop the file to start a new process.",
     extractDropPassive: "Drag & drop PDF here or click to select",
     pagesToExtractLabel: "Pages to Extract:",
@@ -273,7 +287,7 @@ export const translations = {
     uploadFirst: "Please upload a PDF file first.",
 
     // --- EDIT PAGE ---
-    editPageTitle: "PDF AI — Page Editor",
+    editPageTitle: "Neuro PDF — Page Editor",
     editDropActive: "Drop the file to load...",
     editDropPassive: "Drag & drop PDF here or select with buttons",
     previewDragDrop: "📄 PDF Preview — Drag & Drop Pages",
@@ -290,6 +304,8 @@ export const translations = {
     summarizeFailed: "Summarization failed.",
     summarizing: "Summarizing...",
     summarizeButton: "Summarize",
+    summaryResultTitle: "Summary Result",
+    waitMessage: "This process may take some time depending on the file size. Please wait.",
     downloadPdf: "Download PDF",
     summaryResult: "Summary Result",
 
@@ -301,6 +317,13 @@ export const translations = {
     pdfLoading: "Loading PDF...",
     pdfError: "PDF could not be displayed.",
     page: "Page",
+
+    // PdfViewer Translations
+    prev: "Previous",
+    next: "Next",
+    pdfLoadError: "PDF could not be loaded.",
+    preparingFile: "Preparing file...",
+    
 
     // --- COMMON ACTIONS ---
     download: "Download",
