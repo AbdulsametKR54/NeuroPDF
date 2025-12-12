@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useState, useEffect } from "react";
 import { Document, Page, pdfjs } from "react-pdf";
+import { useLanguage } from "@/context/LanguageContext";
 import "react-pdf/dist/Page/TextLayer.css";
 import "react-pdf/dist/Page/AnnotationLayer.css";
 
-// public/ klasörüne kopyaladığın .mjs dosyasını kullanıyoruz
+// Worker ayarı
 pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.mjs";
 
 type Props = {
@@ -14,155 +15,152 @@ type Props = {
 };
 
 export default function PdfViewer({ file, height = 700 }: Props) {
+  const { t } = useLanguage();
   const [numPages, setNumPages] = useState(0);
-  const [scale, setScale] = useState(1.2);
+  const [scale, setScale] = useState(1.0);
   const [page, setPage] = useState(1);
   const [pageInput, setPageInput] = useState("1");
 
-  // Blob URL’ünü güvenli şekilde yönet
-  const [objectUrl, setObjectUrl] = useState<string | null>(null);
-  const prevUrlRef = useRef<string | null>(null);
-
-  useEffect(() => {
-    // string URL ise direkt kullan
-    if (typeof file === "string") {
-      setObjectUrl(file);
-      return () => {
-        // string URL için revoke yok
-      };
-    }
-
-    // File ise yeni URL üret
-    const url = URL.createObjectURL(file);
-    setObjectUrl(url);
-
-    // Bir önceki URL’i (varsa) temizle
-    if (prevUrlRef.current && prevUrlRef.current !== url) {
-      try {
-        URL.revokeObjectURL(prevUrlRef.current);
-      } catch {}
-    }
-    prevUrlRef.current = url;
-
-    // Unmount’ta son URL’i temizle
-    return () => {
-      if (prevUrlRef.current) {
-        try {
-          URL.revokeObjectURL(prevUrlRef.current);
-        } catch {}
-        prevUrlRef.current = null;
-      }
-    };
-  }, [file]); // dikkat: fileSource yok, sadece file
-
+  // Sayfa inputunu güncelle
   useEffect(() => {
     setPageInput(String(page));
   }, [page]);
 
-  return (
-    <div className="w-full">
-      {/* Kontroller */}
-      <div className="flex flex-wrap items-center gap-3 mb-3">
-        <button
-          className="px-3 py-1 rounded-xl bg-neutral-800 text-white disabled:opacity-50"
-          onClick={() => setPage((p) => Math.max(1, p - 1))}
-          disabled={page <= 1}
-        >
-          ← Önceki
-        </button>
-        <button
-          className="px-3 py-1 rounded-xl bg-neutral-800 text-white disabled:opacity-50"
-          onClick={() => setPage((p) => Math.min(numPages, p + 1))}
-          disabled={!numPages || page >= numPages}
-        >
-          Sonraki →
-        </button>
+  // Yeni dosya geldiğinde sayfayı başa al
+  useEffect(() => {
+    setPage(1);
+    setPageInput("1");
+  }, [file]);
 
-        <div className="ml-2 flex items-center gap-2">
-          <span>Sayfa: {page}/{numPages || "?"}</span>
-          <input
-            type="number"
-            className="w-20 px-2 py-1 rounded bg-neutral-800 text-white border border-neutral-700"
-            min={1}
-            max={numPages || 1}
-            value={pageInput}
-            onChange={(e) => {
-              const v = e.target.value;
-              if (/^\d*$/.test(v)) setPageInput(v);
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                const n = parseInt(pageInput, 10);
-                if (!Number.isNaN(n)) {
-                  const clamped = Math.min(Math.max(1, n), numPages || 1);
-                  setPage(clamped);
-                }
-              }
-            }}
-            disabled={!numPages}
-          />
+  const changePage = (newPage: number) => {
+    const clamped = Math.min(Math.max(1, newPage), numPages || 1);
+    setPage(clamped);
+  };
+
+  const buttonClass = "px-3 py-1.5 rounded-lg text-sm font-bold shadow-md transition-transform hover:scale-105 disabled:opacity-50 disabled:scale-100 disabled:cursor-not-allowed";
+  
+  const buttonStyle = {
+    backgroundColor: 'var(--button-bg)',
+    color: 'var(--button-text)',
+    border: 'none'
+  };
+
+  return (
+    <div className="w-full flex flex-col gap-3">
+      
+      {/* --- TOOLBAR --- */}
+      <div 
+        className="flex flex-wrap items-center justify-between gap-3 p-3 rounded-xl border shadow-sm"
+        style={{ 
+            backgroundColor: 'var(--container-bg)', 
+            borderColor: 'var(--container-border)' 
+        }}
+      >
+        {/* Sol: Sayfa Gezinti */}
+        <div className="flex items-center gap-2">
           <button
-            className="px-3 py-1 rounded-xl bg-neutral-800 text-white disabled:opacity-50"
-            onClick={() => {
-              const n = parseInt(pageInput, 10);
-              if (!Number.isNaN(n)) {
-                const clamped = Math.min(Math.max(1, n), numPages || 1);
-                setPage(clamped);
-              }
-            }}
-            disabled={!numPages}
+            className={buttonClass}
+            style={buttonStyle}
+            onClick={() => changePage(page - 1)}
+            disabled={page <= 1}
           >
-            Git
+            ← {t('prev')}
+          </button>
+          
+          <div className="flex items-center gap-1">
+            <input
+              type="text"
+              className="w-12 px-1 py-1.5 text-center rounded-lg border text-sm font-medium focus:outline-none focus:ring-2"
+              style={{ 
+                  backgroundColor: 'var(--background)', 
+                  color: 'var(--foreground)',
+                  borderColor: 'var(--navbar-border)',
+                  '--tw-ring-color': 'var(--button-bg)'
+              } as React.CSSProperties}
+              value={pageInput}
+              onChange={(e) => {
+                const v = e.target.value;
+                if (/^\d*$/.test(v)) setPageInput(v);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") changePage(parseInt(pageInput, 10));
+              }}
+              disabled={!numPages}
+            />
+            <span className="text-sm opacity-70" style={{ color: 'var(--foreground)' }}>/ {numPages || "--"}</span>
+          </div>
+
+          <button
+            className={buttonClass}
+            style={buttonStyle}
+            onClick={() => changePage(page + 1)}
+            disabled={!numPages || page >= numPages}
+          >
+            {t('next')} →
           </button>
         </div>
 
-        <div className="ml-auto flex items-center gap-2">
+        {/* Sağ: Zoom Kontrolü */}
+        <div className="flex items-center gap-2">
           <button
-            className="px-3 py-1 rounded-xl bg-neutral-800 text-white"
-            onClick={() =>
-              setScale((s) => Math.max(0.6, Number((s - 0.1).toFixed(1))))
-            }
+            className={buttonClass}
+            style={buttonStyle}
+            onClick={() => setScale((s) => Math.max(0.5, Number((s - 0.1).toFixed(1))))}
           >
             −
           </button>
-          <span>%{Math.round(scale * 100)}</span>
+          <span className="text-sm font-medium w-12 text-center" style={{ color: 'var(--foreground)' }}>
+            %{Math.round(scale * 100)}
+          </span>
           <button
-            className="px-3 py-1 rounded-xl bg-neutral-800 text-white"
-            onClick={() =>
-              setScale((s) => Math.min(2, Number((s + 0.1).toFixed(1))))
-            }
+            className={buttonClass}
+            style={buttonStyle}
+            onClick={() => setScale((s) => Math.min(3, Number((s + 0.1).toFixed(1))))}
           >
             +
           </button>
         </div>
       </div>
 
-      {/* Viewer */}
+      {/* --- PDF GÖRÜNTÜLEME ALANI --- */}
       <div
-        className="rounded-2xl border border-neutral-700 bg-neutral-900 overflow-auto"
-        style={{ height }}
+        className="rounded-xl border overflow-auto flex justify-center bg-gray-100 dark:bg-gray-900"
+        style={{ 
+            height,
+            borderColor: 'var(--container-border)' 
+        }}
       >
-        {objectUrl ? (
-          <Document
-            file={objectUrl}
-            onLoadSuccess={({ numPages }) => {
-              setNumPages(numPages);
-              setPage(1);
-              setPageInput("1");
-            }}
-            loading={<div className="p-6">Yükleniyor…</div>}
-            error={<div className="p-6 text-red-400">PDF yüklenemedi.</div>}
-          >
-            <Page
-              pageNumber={page}
-              scale={scale}
-              renderTextLayer
-              renderAnnotationLayer
-            />
-          </Document>
-        ) : (
-          <div className="p-6">Dosya hazırlanıyor…</div>
-        )}
+        {/* DÜZELTME:
+            - createObjectURL kaldırıldı.
+            - ArrayBuffer kaldırıldı.
+            - `file` prop'u doğrudan Document bileşenine verildi.
+            - react-pdf dosya türünü (String URL veya File objesi) kendi algılayıp yönetir.
+        */}
+        <Document
+          file={file}
+          onLoadSuccess={({ numPages }) => {
+            setNumPages(numPages);
+          }}
+          loading={
+              <div className="flex items-center justify-center h-full text-sm opacity-70" style={{ color: 'var(--foreground)' }}>
+                  {t('loading')}
+              </div>
+          }
+          error={
+              <div className="flex items-center justify-center h-full text-red-500 font-medium">
+                  {t('pdfLoadError')}
+              </div>
+          }
+          className="flex justify-center py-8"
+        >
+          <Page
+            pageNumber={page}
+            scale={scale}
+            renderTextLayer={true}
+            renderAnnotationLayer={true}
+            className="shadow-lg"
+          />
+        </Document>
       </div>
     </div>
   );

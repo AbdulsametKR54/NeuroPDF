@@ -4,6 +4,7 @@ import "./globals.css";
 import Providers from "./Providers"; // global providers (theme, session vs.)
 import NavBar from "@/components/NavBar";
 import ClientPdfPanel from "@/components/ClientPdfPanel";
+import EulaGuard from "@/components/auth/EulaGuard";
 
 import { PdfProvider } from "@/context/PdfContext";
 import { LanguageProvider } from "@/context/LanguageContext";
@@ -21,30 +22,34 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           "antialiased transition-colors duration-300 bg-[var(--background)] text-[var(--foreground)]"
         }
       >
-        {/* Global Providers burada olmalı */}
+        {/* Global Providers */}
         <Providers>
-          {/* Dil yönetimi */}
+          {/* Dil yönetimi - EulaGuard içinde çeviri kullanıldığı için onu kapsamalı */}
           <LanguageProvider>
             {/* PDF yönetimi */}
             <PdfProvider>
-              {/* Navbar */}
+              
+              {/* NavBar: Kullanıcı çıkış yapabilsin diye Guard'ın dışında kalabilir veya içine de alabilirsin. Dışarıda kalması genelde daha iyidir (Logout için). */}
               <NavBar />
 
-              {/* Content + Sağ Panel */}
-              <div
-                className="flex min-h-screen"
-                style={{ paddingTop: "var(--navbar-height)" }} // Navbar yüksekliği dinamik
-              >
-                {/* SOL: Sayfa içeriği */}
-                <main className="flex-1 flex flex-col min-w-0 px-4 md:px-6">
-                  {children}
-                </main>
+              {/* EulaGuard: Tüm içerik alanını sarmalar */}
+              <EulaGuard>
+                <div
+                  className="flex min-h-screen"
+                  style={{ paddingTop: "var(--navbar-height)" }}
+                >
+                  {/* SOL: Sayfa içeriği */}
+                  <main className="flex-1 flex flex-col min-w-0 px-4 md:px-6">
+                    {children}
+                  </main>
 
-                {/* SAĞ: PDF Panel - desktop'ta görünür, mobile’da gizli */}
-                <div className="hidden lg:block">
-                  <ClientPdfPanel />
+                  {/* SAĞ: PDF Panel */}
+                  <div className="hidden lg:block">
+                    <ClientPdfPanel />
+                  </div>
                 </div>
-              </div>
+              </EulaGuard>
+
             </PdfProvider>
           </LanguageProvider>
         </Providers>

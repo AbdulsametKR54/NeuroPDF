@@ -18,11 +18,14 @@ import re
 import os
 
 # --- ReportLab Importları (PDF Oluşturma İçin) ---
-from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
-from reportlab.lib.utils import simpleSplit
+from reportlab.lib import colors  # Renkler için (colors.grey, colors.black vb.)
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle # Stiller için
+from reportlab.lib.enums import TA_LEFT
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
+# Platypus: Otomatik sayfa düzeni ve Tablo desteği için
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 
 from ..storage import storage_service
 from ..routers.auth import get_current_user
@@ -30,69 +33,37 @@ from ..routers.auth import get_current_user
 router = APIRouter(prefix="/files", tags=["files"])
 
 # ==========================================
-# FONT AYARLARI (Global Değişken)
+# FONT AYARLARI (Source Sans Pro)
 # ==========================================
-# Varsayılan olarak Helvetica kullan (Dosya gerektirmez, Türkçe karakterleri kare gösterir)
-FONT_NAME = "Helvetica"
+
+current_file_path = os.path.abspath(__file__)
+routers_dir = os.path.dirname(current_file_path)
+app_dir = os.path.dirname(routers_dir)
+backend_dir = os.path.dirname(app_dir)
+fonts_dir = os.path.join(backend_dir, "fonts", "Source_Sans_Pro")
+
+regular_font_path = os.path.join(fonts_dir, "SourceSansPro-Regular.ttf")
+bold_font_path = os.path.join(fonts_dir, "SourceSansPro-Bold.ttf")
+
+FONT_NAME_REGULAR = "Helvetica" 
+FONT_NAME_BOLD = "Helvetica-Bold"
 
 try:
-    # 'DejaVuSerif.ttf' dosyasını backend klasöründe arıyoruz
-    if os.path.exists("DejaVuSerif.ttf"):
-        pdfmetrics.registerFont(TTFont('DejaVuSerif', 'DejaVuSerif.ttf'))
-        FONT_NAME = 'DejaVuSerif'
-        print("✅ DejaVuSerif fontu başarıyla yüklendi.")
-    elif os.path.exists("arial.ttf"):
-        pdfmetrics.registerFont(TTFont('Arial', 'arial.ttf'))
-        FONT_NAME = 'Arial'
-        print("✅ Arial fontu yüklendi (Yedek).")
+    if os.path.exists(regular_font_path):
+        pdfmetrics.registerFont(TTFont('SourceSansPro-Regular', regular_font_path))
+        FONT_NAME_REGULAR = 'SourceSansPro-Regular'
+        print(f"✅ Normal Font Yüklendi: {regular_font_path}")
+    
+    if os.path.exists(bold_font_path):
+        pdfmetrics.registerFont(TTFont('SourceSansPro-Bold', bold_font_path))
+        FONT_NAME_BOLD = 'SourceSansPro-Bold'
+        print(f"✅ Kalın Font Yüklendi: {bold_font_path}")
     else:
-        print("⚠️ Uyarı: Font dosyası bulunamadı. Varsayılan (Helvetica) kullanılıyor.")
+        if FONT_NAME_REGULAR != "Helvetica":
+            FONT_NAME_BOLD = FONT_NAME_REGULAR
+
 except Exception as e:
     print(f"❌ Font yükleme hatası: {e}")
-
-# ==========================================
-# DOSYA BOYUTU LIMITLERİ
-# ==========================================
-
-MAX_FILE_SIZE_GUEST_MB = getattr(settings, "MAX_FILE_SIZE_GUEST_MB", 5)
-MAX_FILE_SIZE_USER_MB = getattr(settings, "MAX_FILE_SIZE_USER_MB", 20)
-
-MAX_FILE_SIZE_GUEST_BYTES = MAX_FILE_SIZE_GUEST_MB * 1024 * 1024
-MAX_FILE_SIZE_USER_BYTES = MAX_FILE_SIZE_USER_MB * 1024 * 1024
-
-
-def _enforce_file_size_limit(file_size: int, is_guest: bool):
-    """
-    Dosya boyutunu, misafir / kullanıcı limitine göre kontrol eder.
-    Limit aşıldığında 413 döner.
-    """
-    if is_guest:
-        limit_bytes = MAX_FILE_SIZE_GUEST_BYTES
-        limit_mb = MAX_FILE_SIZE_GUEST_MB
-        user_type = "Misafir kullanıcılar"
-    else:
-        limit_bytes = MAX_FILE_SIZE_USER_BYTES
-        limit_mb = MAX_FILE_SIZE_USER_MB
-        user_type = "Giriş yapmış kullanıcılar"
-
-    if file_size > limit_bytes:
-        raise HTTPException(
-            status_code=413,
-            detail=f"Dosya çok büyük. {user_type} için maksimum dosya boyutu {limit_mb} MB."
-        )
-
-
-def _get_upload_file_size(upload_file: UploadFile) -> int:
-    """
-    UploadFile içindeki SpooledTemporaryFile'dan boyutu hesaplar.
-    """
-    file_obj = upload_file.file
-    current_pos = file_obj.tell()
-    file_obj.seek(0, os.SEEK_END)
-    size = file_obj.tell()
-    file_obj.seek(current_pos)
-    return size
-
 
 # ==========================================
 # GENEL ÖZETLEME
@@ -101,26 +72,22 @@ def _get_upload_file_size(upload_file: UploadFile) -> int:
 @router.post("/summarize")
 async def summarize_file(
     file: UploadFile = File(...),
-    authorization: Optional[str] = Header(None)
+    authorization: Optional[str] = Header(None) 
 ):
     """
     Frontend'deki 'handleSummarize' fonksiyonunun çağırdığı SENKRON endpoint.
     Dosyayı alır -> AI Service'e gönderir -> Cevabı Frontend'e iletir.
     """
+    
     # 1. Dosya Tipi Kontrolü
     if file.content_type != "application/pdf":
         raise HTTPException(status_code=400, detail="Sadece PDF dosyaları kabul edilir.")
 
     try:
-        # 2. Dosya boyut limit kontrolü
-        file_size = _get_upload_file_size(file)
-        is_guest = authorization is None
-        _enforce_file_size_limit(file_size, is_guest=is_guest)
-
-        # 3. Dosya İçeriğini Oku
+        # 2. Dosya İçeriğini Oku
         file_content = await file.read()
-
-        # 4. AI Service'e Gönderilecek Veriyi Hazırla
+        
+        # 3. AI Service'e Gönderilecek Veriyi Hazırla
         # NOT: Türkçe karakter hatası (Unicode) almamak için dosya adını 'upload.pdf' olarak sabitliyoruz.
         files = {
             "file": ("upload.pdf", file_content, "application/pdf")
@@ -129,21 +96,21 @@ async def summarize_file(
         # AI Service URL'i (Port 8001'de çalıştığını varsayıyoruz)
         ai_service_url = f"{settings.AI_SERVICE_URL}/api/v1/ai/summarize-sync"
 
-        # 5. AI Service'e İstek At
+        # 4. AI Service'e İstek At
         async with httpx.AsyncClient(timeout=120.0) as client:
             response = await client.post(ai_service_url, files=files)
-
+            
             if response.status_code != 200:
                 print(f"❌ AI Service Error: {response.text}")
                 raise HTTPException(status_code=response.status_code, detail="AI Servisi hatası")
-
+            
             result = response.json()
 
-        # 6. Sonucu Frontend'e Dön
+        # 5. Sonucu Frontend'e Dön
         return {
             "status": "success",
             "summary": result.get("summary"),
-            "pdf_blob": None
+            "pdf_blob": None 
         }
 
     except httpx.TimeoutException:
@@ -164,40 +131,36 @@ async def summarize_for_guest(
 ):
     """
     ✅ Misafir kullanıcılar için ANLIK özetleme.
-
+    
     - Dosyayı AI Service'e gönderir
     - Anında sonuç döner
     - Veritabanı gerektirmez
     """
     if file.content_type != "application/pdf":
         raise HTTPException(status_code=400, detail="Sadece PDF dosyaları kabul edilir")
-
+    
     try:
-        # Dosya boyut limit kontrolü (her zaman misafir)
-        file_size = _get_upload_file_size(file)
-        _enforce_file_size_limit(file_size, is_guest=True)
-
         # AI Service'in senkron endpoint'ine gönder
         ai_service_url = f"{settings.AI_SERVICE_URL}/api/v1/ai/summarize-sync"
-
+        
         # Dosyayı oku
         file_content = await file.read()
-
+        
         # AI Service'e gönder
         async with httpx.AsyncClient(timeout=60.0) as client:
             files = {"file": (file.filename, file_content, "application/pdf")}
             response = await client.post(ai_service_url, files=files)
             response.raise_for_status()
-
+        
         result = response.json()
-
+        
         return {
             "status": "completed",
             "summary": result.get("summary"),
             "filename": file.filename,
             "method": "guest"
         }
-
+    
     except httpx.TimeoutException:
         raise HTTPException(status_code=504, detail="AI servisi zaman aşımına uğradı")
     except httpx.HTTPError as e:
@@ -210,7 +173,7 @@ async def summarize_for_guest(
 
 @router.post("/summarize-start/{file_id}")
 async def trigger_summarize_task(
-    file_id: int,
+    file_id: int, 
     current_user: dict = Depends(get_current_user),
     supabase: Client = Depends(get_supabase)
 ):
@@ -218,31 +181,31 @@ async def trigger_summarize_task(
     Frontend'den gelen "Özetle" butonuna basıldığında bu tetiklenir.
     Bu endpoint, aiService'e asenkron bir görev emri gönderir.
     """
-
+    
     try:
         user_id = current_user.get("sub")
-
+        
         # Supabase'den dosya bilgisini çek
         response = supabase.table("documents").select("*").eq("id", file_id).single().execute()
-
+        
         if not response.data:
             raise HTTPException(status_code=404, detail="Dosya bulunamadı")
-
+        
         file_data = response.data
         storage_path = file_data["storage_path"]
-
+        
         # Kullanıcının dosyası mı kontrol et
         if file_data["user_id"] != user_id:
             raise HTTPException(status_code=403, detail="Bu dosyaya erişim yetkiniz yok")
-
+        
         # Dosya durumunu "processing" olarak güncelle
         supabase.table("documents").update({
             "status": "processing"
         }).eq("id", file_id).execute()
-
+        
         # Callback URL oluştur
         callback_url = f"http://backend:8000/files/callback/{file_id}"
-
+        
         # AI Service'e gönderilecek task data
         task_data = {
             "pdf_id": file_id,
@@ -252,13 +215,13 @@ async def trigger_summarize_task(
 
         # AI Service'e asenkron görev gönder
         ai_service_url = f"{settings.AI_SERVICE_URL}/api/v1/ai/summarize-async"
-
+        
         async with httpx.AsyncClient() as client:
             response = await client.post(ai_service_url, json=task_data, timeout=10)
             response.raise_for_status()
-
+        
         print(f"✅ aiService'e görev emri başarıyla gönderildi: {response.json()}")
-
+        
         return {
             "status": "processing",
             "message": "Özetleme işlemi başlatıldı",
@@ -292,17 +255,17 @@ class SummaryCallbackData(BaseModel):
 
 @router.post("/callback/{pdf_id}")
 async def handle_ai_callback(
-    pdf_id: int,
+    pdf_id: int, 
     data: SummaryCallbackData,
     supabase: Client = Depends(get_supabase)
 ):
     """
     aiCeleryWorker, özetleme işini bitirdiğinde bu endpoint'i çağırır.
     """
-
+    
     if pdf_id != data.pdf_id:
         raise HTTPException(
-            status_code=400,
+            status_code=400, 
             detail="URL ID and payload ID do not match"
         )
 
@@ -311,7 +274,7 @@ async def handle_ai_callback(
     try:
         if data.status == "completed":
             print(f"✅ BAŞARI: Özet alındı: {data.summary[:100]}...")
-
+            
             # Supabase'e başarılı sonucu kaydet
             update_data = {
                 "summary": data.summary,
@@ -319,12 +282,12 @@ async def handle_ai_callback(
                 "error": None
             }
             supabase.table("documents").update(update_data).eq("id", pdf_id).execute()
-
+            
             print(f"✅ Özet veritabanına kaydedildi: PDF ID {pdf_id}")
 
         else:
             print(f"❌ HATA: İşleme hatası: {data.error}")
-
+            
             # Supabase'e hata durumunu kaydet
             update_data = {
                 "status": "failed",
@@ -332,11 +295,11 @@ async def handle_ai_callback(
                 "summary": None
             }
             supabase.table("documents").update(update_data).eq("id", pdf_id).execute()
-
+            
             print(f"❌ Hata durumu veritabanına kaydedildi: PDF ID {pdf_id}")
 
         return {
-            "status": "callback_received",
+            "status": "callback_received", 
             "pdf_id": pdf_id,
             "result_status": data.status
         }
@@ -361,29 +324,26 @@ async def get_file_summary(
     """
     try:
         user_id = current_user.get("sub")
-
+        
         # Dosya bilgisini çek
-        response = supabase.table("documents").select(
-            "id, filename, status, summary, error, created_at, user_id"
-        ).eq("id", file_id).single().execute()
-
+        response = supabase.table("documents").select("id, filename, status, summary, error, created_at").eq("id", file_id).single().execute()
+        
         if not response.data:
             raise HTTPException(status_code=404, detail="Dosya bulunamadı")
-
+        
         file_data = response.data
-
+        
         # Kullanıcının dosyası mı kontrol et
         if file_data.get("user_id") != user_id:
             raise HTTPException(status_code=403, detail="Bu dosyaya erişim yetkiniz yok")
-
+        
         return file_data
-
+        
     except HTTPException:
         raise
     except Exception as e:
         print(f"❌ Özet sorgulama hatası: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
 
 # ==========================================
 # MARKDOWN TO PDF (PDF İNDİRME)
@@ -392,105 +352,159 @@ async def get_file_summary(
 class MarkdownToPdfRequest(BaseModel):
     markdown: str
 
-
 @router.post("/markdown-to-pdf")
 async def markdown_to_pdf(request: MarkdownToPdfRequest):
     """
-    Markdown metnini alır, temizler ve formatlı PDF olarak döndürür.
+    Markdown metnini alır, Tabloları ve Türkçe karakterleri işleyerek PDF'e çevirir.
+    Platypus motoru kullanıldığı için sayfa taşmaları ve tablolar otomatik yönetilir.
     """
     try:
-        text_content = request.markdown
-        packet = io.BytesIO()
+        buffer = io.BytesIO()
+        
+        # 1. Doküman Şablonu (Sayfa kenar boşlukları)
+        doc = SimpleDocTemplate(
+            buffer,
+            pagesize=A4,
+            rightMargin=50, leftMargin=50,
+            topMargin=50, bottomMargin=50
+        )
 
-        c = canvas.Canvas(packet, pagesize=A4)
-        width, height = A4
+        # 2. Stiller
+        styles = getSampleStyleSheet()
+        
+        # Türkçe destekli Normal Stil
+        style_normal = ParagraphStyle(
+            'TurkishNormal',
+            parent=styles['Normal'],
+            fontName=FONT_NAME_REGULAR,
+            fontSize=11,
+            leading=16, # Satır aralığı
+            spaceAfter=8
+        )
 
-        # Sayfa Ayarları
-        margin_x = 50
-        margin_y = 50
-        max_width = width - (2 * margin_x)
-        y_position = height - margin_y
+        # Başlık Stili
+        style_heading = ParagraphStyle(
+            'TurkishHeading',
+            parent=styles['Heading1'],
+            fontName=FONT_NAME_BOLD,
+            fontSize=14,
+            leading=18,
+            spaceAfter=12,
+            spaceBefore=12,
+            textColor=colors.HexColor("#2c3e50")
+        )
 
-        # Font Ayarları
-        base_font = FONT_NAME        # Normal Font
-        bold_font = FONT_NAME        # Kalın Font (Aynı fontu kullanıyoruz şimdilik)
+        # Tablo Hücresi Stili (Daha küçük font)
+        style_cell = ParagraphStyle(
+            'TableCell',
+            parent=styles['Normal'],
+            fontName=FONT_NAME_REGULAR,
+            fontSize=10,
+            leading=12
+        )
 
-        font_size_normal = 11
-        font_size_header = 14
-        line_height = 16
-
-        c.setFont(base_font, font_size_normal)
-
-        lines = text_content.split('\n')
+        # 3. İçerik Oluşturma (Story)
+        story = []
+        lines = request.markdown.split('\n')
+        
+        table_buffer = [] # Tablo satırlarını biriktirmek için
+        in_table = False
 
         for line in lines:
             line = line.strip()
 
-            # 1. Başlık Kontrolü (#)
+            # --- TABLO ALGILAMA MANTIĞI ---
+            if line.startswith('|'):
+                # Tablo satırı ise
+                in_table = True
+                
+                # Markdown tablosundaki satırı hücrelere böl
+                # Örnek: | Hücre 1 | Hücre 2 | -> ['Hücre 1', 'Hücre 2']
+                cells = [cell.strip() for cell in line.split('|') if cell]
+                
+                # Ayırıcı satır kontrolü (örn: |---|---|)
+                # Eğer satır sadece tire (-) ve iki nokta (:) içeriyorsa bu bir ayırıcıdır, veriye ekleme
+                is_separator = all(re.match(r'^[\s\-:]+$', c) for c in cells)
+                
+                if not is_separator:
+                    # Hücre içindeki metni Paragraph'a çevir (Word Wrap için)
+                    row_data = [Paragraph(cell, style_cell) for cell in cells]
+                    table_buffer.append(row_data)
+                
+                continue # Sonraki satıra geç (Tablo işlemeye devam et)
+            
+            else:
+                # Eğer tablo modundaysak ve normal satıra geldiysek, TABLOYU OLUŞTUR
+                if in_table and table_buffer:
+                    # Sütun sayısını bul (en geniş satıra göre)
+                    col_count = max(len(row) for row in table_buffer)
+                    # Sayfa genişliği (A4 genişliği - kenar boşlukları)
+                    avail_width = A4[0] - 100 
+                    col_width = avail_width / col_count
+
+                    t = Table(table_buffer, colWidths=[col_width] * col_count)
+                    
+                    # Tablo Stili
+                    t.setStyle(TableStyle([
+                        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#f3f4f6")), # Başlık arkaplanı
+                        ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
+                        ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                        ('FONTNAME', (0, 0), (-1, 0), FONT_NAME_BOLD), # Başlık fontu
+                        ('FONTNAME', (0, 1), (-1, -1), FONT_NAME_REGULAR),
+                        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                        ('GRID', (0, 0), (-1, -1), 0.5, colors.grey), # Izgara çizgileri
+                    ]))
+                    
+                    story.append(t)
+                    story.append(Spacer(1, 12))
+                    
+                    # Buffer'ı temizle
+                    table_buffer = []
+                    in_table = False
+
+            # --- NORMAL METİN İŞLEME ---
+            if not line:
+                continue
+
+            # Başlıklar
             if line.startswith('#'):
-                # Başlık seviyesini temizle (#, ##, ###)
                 clean_line = line.lstrip('#').strip()
-
-                # Başlık Fontu ve Boşluk
-                c.setFont(bold_font, font_size_header)
-                y_position -= 10
-
-                # Başlığı Yaz
-                wrapped = simpleSplit(clean_line, bold_font, font_size_header, max_width)
-                for wl in wrapped:
-                    if y_position < margin_y:
-                        c.showPage()
-                        y_position = height - margin_y
-                    c.drawString(margin_x, y_position, wl)
-                    y_position -= (line_height + 4)
-
-                # Normale dön
-                c.setFont(base_font, font_size_normal)
-                y_position -= 5
+                story.append(Paragraph(clean_line, style_heading))
                 continue
-
-            # 2. Madde İşaretleri (* veya -)
-            is_bullet = False
+            
+            # Madde İşaretleri
             if line.startswith('* ') or line.startswith('- '):
-                is_bullet = True
-                line = line[2:]  # İşareti kaldır
+                # Bullet karakteri ekle
+                clean_line = f"• {line[2:]}"
+                # Bold temizliği
+                clean_line = clean_line.replace('**', '')
+                story.append(Paragraph(clean_line, style_normal))
+            else:
+                # Düz metin
+                clean_line = line.replace('**', '')
+                story.append(Paragraph(clean_line, style_normal))
 
-            # 3. Kalınlık İşaretlerini Temizle (**)
-            clean_line = line.replace('**', '')
+        # Döngü bittiğinde hala bekleyen tablo varsa ekle
+        if in_table and table_buffer:
+            col_count = max(len(row) for row in table_buffer)
+            avail_width = A4[0] - 100 
+            col_width = avail_width / col_count
+            t = Table(table_buffer, colWidths=[col_width] * col_count)
+            t.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#f3f4f6")),
+                ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+                ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                ('FONTNAME', (0, 0), (-1, -1), FONT_NAME_REGULAR),
+            ]))
+            story.append(t)
 
-            # Boş satırsa geç
-            if not clean_line:
-                y_position -= (line_height / 2)
-                continue
-
-            # 4. Satırı Yazdır (Word Wrap)
-            current_x = margin_x + (15 if is_bullet else 0)  # Maddeler içeriden başlar
-            current_max_width = max_width - (15 if is_bullet else 0)
-
-            wrapped_lines = simpleSplit(clean_line, base_font, font_size_normal, current_max_width)
-
-            for i, wl in enumerate(wrapped_lines):
-                # Sayfa sonu kontrolü
-                if y_position < margin_y:
-                    c.showPage()
-                    c.setFont(base_font, font_size_normal)
-                    y_position = height - margin_y
-
-                # Madde işareti koy (Sadece ilk satıra)
-                if is_bullet and i == 0:
-                    c.drawString(margin_x, y_position, "•")
-
-                c.drawString(current_x, y_position, wl)
-                y_position -= line_height
-
-            # Paragraf arası hafif boşluk
-            y_position -= 2
-
-        c.save()
-        packet.seek(0)
-
+        # 4. PDF'i Oluştur
+        doc.build(story)
+        
+        buffer.seek(0)
         return StreamingResponse(
-            packet,
+            buffer,
             media_type="application/pdf",
             headers={"Content-Disposition": 'attachment; filename="ozet.pdf"'}
         )
@@ -498,8 +512,7 @@ async def markdown_to_pdf(request: MarkdownToPdfRequest):
     except Exception as e:
         print(f"❌ PDF Hatası: {str(e)}")
         raise HTTPException(status_code=500, detail=f"PDF hatası: {str(e)}")
-
-
+    
 # ==========================================
 # UPLOAD & STORAGE MANAGEMENT (YEREL + DB)
 # ==========================================
@@ -514,43 +527,38 @@ async def upload_pdf(
     """PDF'i YEREL uploads klasörüne kaydet ve DB'ye kayıt ekle."""
     if file.content_type != "application/pdf":
         raise HTTPException(status_code=400, detail="Only PDF files allowed")
-
+    
     user_id = None
     if authorization:
         try:
             user_data = get_current_user(authorization)
             user_id = user_data.get("sub")
-        except Exception:
+        except:
             pass
-
+    
     if not user_id:
         user_id = x_guest_id or "guest"
-
-    # Dosya boyut limit kontrolü
-    file_size = _get_upload_file_size(file)
-    is_guest = (user_id == "guest") or (isinstance(user_id, str) and user_id.startswith("guest_"))
-    _enforce_file_size_limit(file_size, is_guest=is_guest)
-
+    
     try:
         # Dosyayı yerel storage'a kaydet
         upload_result = await storage_service.upload_file(file, user_id)
         print(f"✅ File uploaded locally: {upload_result['path']}")
-
+        
         # Kayıtlı kullanıcı ise DB'ye kaydet
-        if user_id != "guest" and not (isinstance(user_id, str) and user_id.startswith("guest_")):
+        if user_id != "guest" and not user_id.startswith("guest_"):
             document_data = {
                 "user_id": user_id,
                 "filename": upload_result["filename"],
                 "storage_path": upload_result["path"],
                 "status": "uploaded"
             }
-
+            
             db_response = supabase.table("documents").insert(document_data).execute()
-
+            
             if db_response.data:
                 file_id = db_response.data[0]["id"]
                 print(f"✅ File saved to database with ID: {file_id}")
-
+                
                 return {
                     "file_id": file_id,
                     "filename": upload_result["filename"],
@@ -558,7 +566,7 @@ async def upload_pdf(
                     "file_path": upload_result["path"],
                     "message": "File uploaded successfully"
                 }
-
+        
         # Guest kullanıcı için sadece yerel storage
         return {
             "filename": upload_result["filename"],
@@ -566,7 +574,7 @@ async def upload_pdf(
             "file_path": upload_result["path"],
             "message": "File uploaded successfully (guest mode)"
         }
-
+        
     except Exception as e:
         print(f"Upload error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -580,17 +588,17 @@ async def get_my_files(
     """Kullanıcının tüm dosyalarını listele."""
     try:
         user_id = current_user.get("sub")
-
+        
         # Kullanıcının dosyalarını çek
         response = supabase.table("documents").select(
             "id, filename, status, created_at"
         ).eq("user_id", user_id).order("created_at", desc=True).execute()
-
+        
         return {
             "files": response.data,
             "total": len(response.data)
         }
-
+        
     except Exception as e:
         print(f"List files error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -605,34 +613,35 @@ async def delete_file(
     """Dosyayı hem yerel storage'dan hem de DB'den sil."""
     try:
         user_id = current_user.get("sub")
-
+        
         # Dosya bilgisini çek
         response = supabase.table("documents").select("*").eq("id", file_id).single().execute()
-
+        
         if not response.data:
             raise HTTPException(status_code=404, detail="Dosya bulunamadı")
-
+        
         file_data = response.data
-
+        
         # Kullanıcının dosyası mı kontrol et
         if file_data["user_id"] != user_id:
             raise HTTPException(status_code=403, detail="Bu dosyayı silme yetkiniz yok")
-
+        
         # Yerel dosyayı sil
+        import os
         storage_path = file_data["storage_path"]
         if os.path.exists(storage_path):
             os.remove(storage_path)
             print(f"✅ Yerel dosya silindi: {storage_path}")
-
+        
         # DB kaydını sil
         supabase.table("documents").delete().eq("id", file_id).execute()
         print(f"✅ DB kaydı silindi: {file_id}")
-
+        
         return {
             "message": "Dosya başarıyla silindi",
             "file_id": file_id
         }
-
+        
     except HTTPException:
         raise
     except Exception as e:
@@ -648,30 +657,30 @@ def parse_page_ranges(range_str: str, max_pages: int) -> list[int]:
     """Kullanıcıdan gelen sayfa aralığı dizesini 0-tabanlı dizinlere dönüştürür."""
     if not range_str:
         raise ValueError("Sayfa aralığı boş olamaz.")
-
+        
     page_indices = set()
     parts = range_str.split(',')
-
+    
     for part in parts:
         part = part.strip()
         if not part:
             continue
-
+            
         if re.fullmatch(r'\d+', part):
             page_num = int(part)
             if 1 <= page_num <= max_pages:
                 page_indices.add(page_num - 1)
             else:
                 raise ValueError(f"Sayfa {page_num} maksimum sayfa sayısını aşıyor.")
-
+        
         elif re.fullmatch(r'\d+-\d+', part):
             start_str, end_str = part.split('-')
             start = int(start_str)
             end = int(end_str)
-
+            
             if start > end:
                 raise ValueError(f"Geçersiz aralık: {start}-{end}.")
-
+                
             for page_num in range(start, end + 1):
                 if 1 <= page_num <= max_pages:
                     page_indices.add(page_num - 1)
@@ -684,7 +693,6 @@ def parse_page_ranges(range_str: str, max_pages: int) -> list[int]:
 @router.post("/convert-text")
 async def convert_text_from_pdf(
     file: UploadFile = File(...),
-    authorization: Optional[str] = Header(None),
     x_guest_id: Optional[str] = Header(None, alias="X-Guest-ID")
 ):
     """PDF'den metin çıkarır ve .txt olarak döndürür."""
@@ -692,25 +700,20 @@ async def convert_text_from_pdf(
         raise HTTPException(status_code=400, detail="Lütfen bir PDF dosyası yükleyin.")
 
     try:
-        # Dosya boyut limit kontrolü
-        file_size = _get_upload_file_size(file)
-        is_guest = authorization is None
-        _enforce_file_size_limit(file_size, is_guest=is_guest)
-
         pdf_content = await file.read()
         pdf_stream = io.BytesIO(pdf_content)
         reader = PdfReader(pdf_stream)
-
+        
         full_text = []
         for page in reader.pages:
             text = page.extract_text()
             if text:
                 full_text.append(text)
-
+        
         final_text = "\n".join(full_text)
         text_bytes = final_text.encode('utf-8')
         text_stream = io.BytesIO(text_bytes)
-
+        
         base_filename = file.filename.replace('.pdf', '') if file.filename else 'document'
         new_filename = f"{base_filename}.txt"
 
@@ -729,17 +732,11 @@ async def convert_text_from_pdf(
 async def extract_pdf_pages(
     file: UploadFile = File(...),
     page_range: str = Form(...),
-    authorization: Optional[str] = Header(None),
     x_guest_id: Optional[str] = Header(None, alias="X-Guest-ID")
 ):
     """PDF'den belirtilen sayfaları çıkarır."""
     if file.content_type != "application/pdf":
         raise HTTPException(status_code=400, detail="Lütfen bir PDF dosyası yükleyin.")
-
-    # Dosya boyut limit kontrolü
-    file_size = _get_upload_file_size(file)
-    is_guest = authorization is None
-    _enforce_file_size_limit(file_size, is_guest=is_guest)
 
     pdf_content = await file.read()
     input_pdf_stream = io.BytesIO(pdf_content)
@@ -747,9 +744,9 @@ async def extract_pdf_pages(
     try:
         reader = PdfReader(input_pdf_stream)
         max_pages = len(reader.pages)
-
+        
         page_indices = parse_page_ranges(page_range, max_pages)
-
+        
         if not page_indices:
             raise HTTPException(status_code=400, detail="Geçersiz sayfa aralığı.")
 
@@ -766,7 +763,7 @@ async def extract_pdf_pages(
             media_type="application/pdf",
             headers={"Content-Disposition": f'attachment; filename="extracted_{file.filename}"'}
         )
-
+        
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -777,34 +774,26 @@ async def extract_pdf_pages(
 @router.post("/merge-pdfs")
 async def merge_pdfs(
     files: List[UploadFile] = File(...),
-    authorization: Optional[str] = Header(None),
     x_guest_id: Optional[str] = Header(None, alias="X-Guest-ID")
 ):
     """Birden fazla PDF'i birleştirir."""
     if len(files) < 2:
         raise HTTPException(status_code=400, detail="En az 2 PDF gerekli.")
 
-    is_guest = authorization is None
     writer = PdfWriter()
 
     for file in files:
         if file.content_type != "application/pdf":
             raise HTTPException(status_code=400, detail=f"'{file.filename}' geçerli bir PDF değil.")
-
+        
         try:
-            # Her dosya için boyut kontrolü
-            file_size = _get_upload_file_size(file)
-            _enforce_file_size_limit(file_size, is_guest=is_guest)
-
             pdf_content = await file.read()
             pdf_stream = io.BytesIO(pdf_content)
             reader = PdfReader(pdf_stream)
-
+            
             for page in reader.pages:
                 writer.add_page(page)
 
-        except HTTPException:
-            raise
         except Exception as e:
             print(f"PDF birleştirme hatası ({file.filename}): {e}")
             raise HTTPException(status_code=500, detail=f"'{file.filename}' işlenirken hata.")
@@ -830,54 +819,42 @@ async def save_processed_pdf(
     """İşlenmiş PDF'i kullanıcının YEREL klasörüne kaydet."""
     if file.content_type != "application/pdf":
         raise HTTPException(status_code=400, detail="Only PDF files allowed")
-
-    # Kayıtlı kullanıcı -> user limit
-    file_size = _get_upload_file_size(file)
-    _enforce_file_size_limit(file_size, is_guest=False)
-
+    
     try:
         user_id = current_user.get("sub")
-
+        
         if not user_id:
             raise HTTPException(status_code=401, detail="User ID not found")
-
+        
         upload_result = await storage_service.upload_file(file, user_id)
-
+        
         print(f"✅ File saved locally: {upload_result['path']}")
-
+        
         return {
             "filename": filename,
             "size_kb": round(upload_result["size"] / 1024, 2),
             "saved_path": upload_result["path"],
             "message": "File saved successfully"
         }
-
+        
     except HTTPException:
         raise
     except Exception as e:
         print(f"Save error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
-
+    
 @router.post("/reorder")
 async def reorder_pdf(
     file: UploadFile = File(...),
     page_numbers: str = Form(...),  # örn: "3,1,2,4"
-    authorization: Optional[str] = Header(None),
-    x_guest_id: Optional[str] = Header(None, alias="X-Guest-ID")
 ):
     """
     Frontend'den gelen sayfa sıralamasına göre PDF'i yeniden sırala.
     """
     if file.content_type != "application/pdf":
         raise HTTPException(status_code=400, detail="Only PDF files allowed")
-
+    
     try:
-        # Dosya boyut limit kontrolü
-        file_size = _get_upload_file_size(file)
-        is_guest = authorization is None
-        _enforce_file_size_limit(file_size, is_guest=is_guest)
-
         # PDF oku
         pdf_content = await file.read()
         pdf_stream = io.BytesIO(pdf_content)
@@ -893,7 +870,7 @@ async def reorder_pdf(
         if any(p < 1 or p > max_pages for p in page_order):
             raise HTTPException(status_code=400, detail="Page numbers out of range")
         if len(page_order) != max_pages:
-            raise HTTPException(statusocode=400, detail="Page count mismatch")
+            raise HTTPException(status_code=400, detail="Page count mismatch")
 
         # sayfaları sırala
         for page_num in page_order:
@@ -909,7 +886,5 @@ async def reorder_pdf(
             headers={"Content-Disposition": f'attachment; filename="reordered_{file.filename}"'}
         )
 
-    except HTTPException:
-        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing PDF: {str(e)}")
