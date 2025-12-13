@@ -8,6 +8,8 @@
   --navbar-bg: #ffffff;
   --navbar-border: #e5e7eb;
 
+  --icon-color: #111111;
+
   --button-bg: #ef4444;
   --button-text: #ffffff;
 
@@ -31,6 +33,9 @@
   --foreground: #f0f0f0;
   --navbar-bg: #2a2540;
   --navbar-border: #3b3655;
+
+
+  --icon-color: #f8fafc;
 
   --button-bg: #fbbf24;
   --button-text: #1e1b2c;

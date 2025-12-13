@@ -1,8 +1,9 @@
 from fastapi import APIRouter, UploadFile, File, HTTPException
+
+from app.services.spellcheck_service import detect_unknown_words
 from ..tasks import pdf_tasks
 from ..services import ai_service, pdf_service
 from ..services import pdf_service
-from ..services.llm_manager import analyze_text_with_ai
 from pydantic import BaseModel
 
 router = APIRouter(
@@ -70,6 +71,15 @@ async def summarize_synchronous(file: UploadFile = File(...)):
             status_code=500, 
             detail=f"Özetleme işlemi başarısız: {str(e)}"
         )
+
+
+class SpellcheckRequest(BaseModel):
+    text: str
+
+@router.post("/spellcheck")
+def spellcheck(req: SpellcheckRequest):
+    suspects = detect_unknown_words(req.text)
+    return {"suspects": suspects, "count": len(suspects)}
 
 
 # ==========================================

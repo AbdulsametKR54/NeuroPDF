@@ -10,3 +10,6 @@ zemberek-python
 httpx
 pydantic-settings  
 python-dotenv
+nltk
+zeyrek
+

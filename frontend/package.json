@@ -3,13 +3,15 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --turbopack",
-    "build": "next build --turbopack",
+    "dev": "next dev",
+    "build": "next build",
     "start": "next start",
     "lint": "eslint"
   },
   "dependencies": {
-    "next": "15.5.4",
+    "@hello-pangea/dnd": "^18.0.1",
+    "framer-motion": "^12.23.26",
+    "next": "^15.5.9",
     "next-auth": "^4.24.11",
     "pdfjs-dist": "^5.3.93",
     "react": "19.1.0",
@@ -19,6 +21,7 @@
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",
+    "@svgr/webpack": "^8.1.0",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",

@@ -50,7 +50,7 @@ export default function HomePage() {
         <h1 className="text-4xl font-bold mb-4 tracking-tight flex items-center gap-4">
           {/* LOGO İKONU */}
           <img 
-            src="/icons/Neuro-PDF.ico" 
+            src="/icons/Neuro-PDF.svg" 
             alt="NeuroPDF Logo" 
           />
           
