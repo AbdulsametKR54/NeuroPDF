@@ -20,13 +20,17 @@ class Settings(BaseSettings):
     # Guest User Limits
     MAX_GUEST_USAGE: int = 3
 
+    # File Size Limits (MB) - YENİ EKLENDİ
+    MAX_FILE_SIZE_GUEST_MB: int = 5
+    MAX_FILE_SIZE_USER_MB: int = 7
+
     # Redis Configuration
     REDIS_URL: Optional[str] = None  # Docker'dan gelir: redis://redis_cache:6379
     REDIS_HOST: str = "localhost"
     REDIS_PORT: int = 6379
 
     # AI Service
-#    AI_SERVICE_URL: str = "http://aiservice:8001"
+    # AI_SERVICE_URL: str = "http://aiservice:8001"
     AI_SERVICE_URL: str = "http://localhost:8001"
 
     def __init__(self, **kwargs):
@@ -63,4 +67,6 @@ print(f"   REDIS_HOST: {settings.REDIS_HOST}")
 print(f"   REDIS_PORT: {settings.REDIS_PORT}")
 print(f"   AI_SERVICE_URL: {settings.AI_SERVICE_URL}")
 print(f"   MAX_GUEST_USAGE: {settings.MAX_GUEST_USAGE}")
+print(f"   LIMIT (GUEST): {settings.MAX_FILE_SIZE_GUEST_MB} MB") # YENİ
+print(f"   LIMIT (USER): {settings.MAX_FILE_SIZE_USER_MB} MB")   # YENİ
 print("=" * 60)

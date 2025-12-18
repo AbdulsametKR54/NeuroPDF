@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, Depends, Header
-from fastapi.responses import PlainTextResponse # <--- YENİ EKLENDİ
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 from google.oauth2 import id_token
 from google.auth.transport import requests as grequests
@@ -8,9 +8,9 @@ import jwt
 import hashlib
 from supabase import Client
 from typing import Optional
-from pathlib import Path # <--- YENİ EKLENDİ (Dosya yolunu bulmak için)
+from pathlib import Path
 
-# Projendeki config ve db yapısının bu yollarda olduğunu varsayıyoruz
+# Config ve DB importları
 from ..config import settings
 from ..db import get_supabase
 
@@ -30,6 +30,7 @@ class AuthOut(BaseModel):
     email: str | None = None
     username: str | None = None
     eula_accepted: bool | None = None
+    created_at: datetime | None = None  # ✅ YENİ: Kayıt tarihi eklendi
 
 class RegisterIn(BaseModel):
     username: str
@@ -78,7 +79,6 @@ def create_jwt(user: dict) -> str:
     Kullanıcı için yeni bir JWT token oluşturur.
     """
     now = datetime.now(timezone.utc)
-    # Supabase'den dönen veri yapısına göre 'id' bazen string bazen int olabilir, string'e çeviriyoruz.
     user_id = str(user.get("id"))
     
     claims = {
@@ -100,7 +100,6 @@ def create_jwt(user: dict) -> str:
 def exchange_google_token(payload: GoogleExchangeIn, supabase: Client = Depends(get_supabase)):
     """
     Google ID Token'ı doğrular ve kullanıcıyı giriş yaptırır/kaydeder.
-    Google ile gelen kullanıcı varsayılan olarak eula_accepted = False başlar.
     """
     try:
         info = id_token.verify_oauth2_token(
@@ -113,7 +112,6 @@ def exchange_google_token(payload: GoogleExchangeIn, supabase: Client = Depends(
 
     sub = info.get("sub")
     email = info.get("email")
-    # İsim yoksa email'in başını al
     name = info.get("name") or (email.split("@")[0] if email else "User")
 
     # Kullanıcı var mı kontrol et
@@ -127,7 +125,7 @@ def exchange_google_token(payload: GoogleExchangeIn, supabase: Client = Depends(
             "provider_user_id": sub,
             "email": email,
             "username": name,
-            "eula_accepted": False  # Google kullanıcıları için kritik adım: EULA onayı henüz yok.
+            "eula_accepted": False 
         }
         response = supabase.table("users").insert(insert_data).execute()
         
@@ -142,7 +140,8 @@ def exchange_google_token(payload: GoogleExchangeIn, supabase: Client = Depends(
         user_id=str(user["id"]),
         email=user.get("email"),
         username=user.get("username"),
-        eula_accepted=user.get("eula_accepted")
+        eula_accepted=user.get("eula_accepted"),
+        created_at=user.get("created_at") # ✅ created_at eklendi
     )
 
 # ==========================================
@@ -152,7 +151,7 @@ def exchange_google_token(payload: GoogleExchangeIn, supabase: Client = Depends(
 @router.post("/register")
 def register_user(payload: RegisterIn, supabase: Client = Depends(get_supabase)):
     """
-    E-posta ve şifre ile kayıt. EULA onayı zorunludur.
+    E-posta ve şifre ile kayıt.
     """
     if not payload.eula_accepted:
         raise HTTPException(status_code=400, detail="EULA must be accepted to register.")
@@ -172,14 +171,14 @@ def register_user(payload: RegisterIn, supabase: Client = Depends(get_supabase))
         "email": payload.email,
         "password": hashed,
         "provider": "local",
-        "eula_accepted": True # Register formunda checkbox işaretlendiği için True
+        "eula_accepted": True
     }
     
     response = supabase.table("users").insert(insert_data).execute()
     
     if not response.data:
-         raise HTTPException(status_code=500, detail="Registration failed")
-         
+          raise HTTPException(status_code=500, detail="Registration failed")
+          
     user = response.data[0]
     token = create_jwt(user)
 
@@ -187,7 +186,8 @@ def register_user(payload: RegisterIn, supabase: Client = Depends(get_supabase))
         "message": "User registered successfully",
         "user_id": user["id"],
         "access_token": token,
-        "token_type": "bearer"
+        "token_type": "bearer",
+        "created_at": user.get("created_at")
     }
 
 # ==========================================
@@ -214,11 +214,12 @@ def login_user(payload: LoginIn, supabase: Client = Depends(get_supabase)):
         user_id=str(user["id"]),
         email=user.get("email"),
         username=user.get("username"),
-        eula_accepted=user.get("eula_accepted")
+        eula_accepted=user.get("eula_accepted"),
+        created_at=user.get("created_at") # ✅ created_at eklendi
     )
 
 # ==========================================
-# ACCEPT EULA (Sonradan Onay)
+# ACCEPT EULA
 # ==========================================
 
 @router.post("/accept-eula")
@@ -227,9 +228,6 @@ def accept_eula(
     current_user: dict = Depends(get_current_user),
     supabase: Client = Depends(get_supabase)
 ):
-    """
-    Giriş yapmış ancak EULA'yı henüz onaylamamış (örn: Google login) kullanıcılar için.
-    """
     if not payload.accepted:
         raise HTTPException(status_code=400, detail="You must accept the agreement.")
 
@@ -264,35 +262,80 @@ def get_me(current_user: dict = Depends(get_current_user), supabase: Client = De
         "email": user.get("email"),
         "username": user.get("username"),
         "provider": user.get("provider"),
-        "eula_accepted": user.get("eula_accepted")
+        "eula_accepted": user.get("eula_accepted"),
+        "created_at": user.get("created_at") # ✅ created_at eklendi
     }
 
 # ==========================================
-# GET EULA TEXT (YENİ EKLENEN KISIM)
+# GET EULA TEXT
 # ==========================================
 @router.get("/eula", response_class=PlainTextResponse)
 def get_eula_text(lang: str = "tr"):
     """
     Frontend'den gelen dile göre EULA metnini okur ve döner.
-    Dosyalar: projenin ana dizinindeki /docs klasöründe aranır.
+    Backend yapısı: /backend/app/routers/auth.py ise ve docs /backend/docs altındaysa:
     """
     filename = "EULA_TR.md" if lang == "tr" else "EULA_EN.md"
     
-    # 1. Dosyanın şu an çalıştığı yeri bul (routers/auth.py)
+    # Dosya yolu çözümleme
     current_file_path = Path(__file__).resolve()
     
-    # 2. İki üst dizine çıkarak proje kök dizinini bul (routers -> root)
-    project_root = current_file_path.parent.parent 
+    # auth.py -> routers -> app -> backend (ROOT)
+    # Eğer yapınız farklıysa buradaki .parent sayısını ayarlamanız gerekebilir.
+    # Genelde /backend/docs klasörüne ulaşmak için:
+    project_root = current_file_path.parent.parent.parent 
     
-    # 3. docs klasörü ve dosya adını ekle
+    # Eğer 'app' klasörü proje köküyle aynı seviyedeyse (örn: /src/app ve /src/docs), o zaman .parent.parent yeterli olabilir.
+    # Güvenli olması için şunu deneyelim: docs klasörünü app ile kardeş varsayarsak:
+    if not (project_root / "docs").exists():
+         # Belki bir alt seviyededir
+         project_root = current_file_path.parent.parent
+
     file_path = project_root / "docs" / filename
-
-    print(f"DEBUG: EULA aranıyor -> {file_path}") # Terminalde bu yolu kontrol edebilirsin
-
+    
     if file_path.exists():
         try:
             return file_path.read_text(encoding="utf-8")
         except Exception as e:
             return f"Error reading file: {str(e)}"
     else:
+        # Hata ayıklama için tam yolu dönüyoruz
         return f"HATA: '{filename}' dosyası bulunamadı. Aranan yol: {file_path}"
+    
+
+# ==========================================
+# DELETE ACCOUNT
+# ==========================================
+
+@router.delete("/delete-account")
+def delete_account(
+    current_user: dict = Depends(get_current_user),
+    supabase: Client = Depends(get_supabase)
+):
+    """
+    Giriş yapmış kullanıcının hesabını ve istatistiklerini kalıcı olarak siler.
+    """
+    user_id = current_user.get("sub")
+    
+    if not user_id:
+        raise HTTPException(status_code=401, detail="User ID not found in token")
+
+    try:
+        # 1. Önce user_stats tablosundaki verileri sil
+        # (Eğer DB'de Cascade ayarı yoksa önce child tabloyu temizlemek gerekir)
+        stats_response = supabase.table("user_stats").delete().eq("user_id", user_id).execute()
+        
+        # 2. Ardından users tablosundan kullanıcıyı sil
+        user_response = supabase.table("users").delete().eq("id", user_id).execute()
+
+        # Silme işleminin başarılı olup olmadığını kontrol et
+        # Supabase delete işleminde silinen veriyi geri döner (data doluysa silinmiştir)
+        if not user_response.data:
+            # Kullanıcı zaten silinmiş olabilir veya bulunamamış olabilir
+            raise HTTPException(status_code=404, detail="User not found or already deleted")
+
+        return {"message": "Account and related data deleted successfully"}
+
+    except Exception as e:
+        # Olası veritabanı hataları için (örn: FK constraint vb.)
+        raise HTTPException(status_code=500, detail=f"Failed to delete account: {str(e)}")

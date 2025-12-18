@@ -1,7 +1,7 @@
 /* --- Global.css --- */
 @import "tailwindcss";
 
-/* --- Açık Mod --- */
+/* --- Açık Mod (Light Theme) --- */
 :root {
   --background: #ffffff;
   --foreground: #111111;
@@ -11,11 +11,15 @@
   --button-bg: #ef4444;
   --button-text: #ffffff;
 
-  /* ✅ YENİ: Bilgi/Uyarı Kutusu (Açık Mod) */
-  /* Arka plan çok açık mavi, yazı çok koyu lacivert (okunabilirlik için) */
+  /* Bilgi/Uyarı Kutusu (Info Box) */
   --info-bg: #eff6ff;
   --info-text: #172554; 
   --info-border: #bfdbfe;
+
+  /* ✅ Hata Kutusu (Error Box - Açık Mod) */
+  --error-bg: #fef2f2; /* Red-50 */
+  --error-text: #991b1b; /* Red-800 - Okunabilirlik için koyu */
+  --error-border: #fecaca; /* Red-200 */
 
   --container-bg: #ffffff;
   --container-border: #e5e7eb;
@@ -23,9 +27,11 @@
 
   --font-sans: var(--font-geist-sans, "Nunito", "Inter", Helvetica, sans-serif);
   --font-mono: var(--font-geist-mono, monospace);
+
+  --danger-action-text: #ffffff; /* Tümünü Temizle (Light) */
 }
 
-/* --- Koyu Mod --- */
+/* --- Koyu Mod (Dark Theme) --- */
 .dark {
   --background: #1e1b2c;
   --foreground: #f0f0f0;
@@ -35,18 +41,26 @@
   --button-bg: #fbbf24;
   --button-text: #1e1b2c;
 
-  /* ✅ YENİ: Bilgi/Uyarı Kutusu (Koyu Mod) */
+  /* Bilgi/Uyarı Kutusu (Info Box) */
   --info-bg: rgba(30, 58, 138, 0.3);
   --info-text: #dbeafe;
   --info-border: #1e3a8a;
 
+  /* ✅ Hata Kutusu (Error Box - Koyu Mod) */
+  --error-bg: rgba(127, 29, 29, 0.25); /* Red-900 %25 Opaklık */
+  --error-text: #fca5a5; /* Red-300 - Koyu zeminde net okunur */
+  --error-border: #7f1d1d; /* Red-900 */
+
   --container-bg: #2a2540;
   --container-border: #3b3655;
   --card-shadow: 0 10px 15px rgba(0,0,0,0.3);
+
+  --danger-action-text: #000000; /* Tümünü Temizle (Light) */
+
 }
 
 @layer components {
-  /* ✅ ÖZEL BUTON SINIFI */
+  /* --- BUTONLAR --- */
   .btn-primary {
     background-color: var(--button-bg);
     color: var(--button-text);
@@ -60,19 +74,33 @@
     box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
   }
 
-  /* ✅ YENİ: BİLGİ KUTUSU SINIFI */
+  /* --- BİLGİ KUTUSU --- */
   .info-box {
     background-color: var(--info-bg);
     color: var(--info-text);
     border: 1px solid var(--info-border);
     border-radius: 0.75rem;
     padding: 1rem;
-    font-size: 0.875rem; /* text-sm */
-    font-weight: 600;    /* font-medium/bold arası */
+    font-size: 0.875rem;
+    font-weight: 600;
+  }
+
+  /* ✅ YENİ EKLENEN: HATA KUTUSU --- */
+  .error-box {
+    background-color: var(--error-bg);
+    color: var(--error-text);
+    border: 1px solid var(--error-border);
+    border-radius: 0.75rem;
+    padding: 1rem;
+    font-size: 0.875rem;
+    font-weight: 600;
+    display: flex;       /* İkon ve yazı hizalaması için */
+    align-items: center;
+    gap: 0.75rem;        /* İkon boşluğu */
   }
 }
 
-/* --- Body --- */
+/* --- Temel HTML Etiketleri --- */
 body {
   background-color: var(--background);
   color: var(--foreground);
@@ -83,14 +111,13 @@ body {
   transition: background-color 0.3s, color 0.3s;
 }
 
-/* --- Navbar --- */
 header {
   background-color: var(--navbar-bg);
   border-bottom: 1px solid var(--navbar-border);
   transition: background-color 0.3s, border-color 0.3s;
 }
 
-/* --- Card --- */
+/* --- Kart Yapısı --- */
 .container-card {
   background: var(--container-bg);
   color: var(--foreground);
@@ -100,7 +127,7 @@ header {
   transition: background-color 0.3s, color 0.3s, box-shadow 0.3s;
 }
 
-/* --- Button --- */
+/* --- Buton Genel --- */
 button {
   background-color: var(--button-bg);
   color: var(--button-text);

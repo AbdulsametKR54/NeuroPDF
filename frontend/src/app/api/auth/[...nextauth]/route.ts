@@ -1,11 +1,10 @@
-// app/api/auth/[...nextauth]/route.ts
-import NextAuth from "next-auth";
-import Google from "next-auth/providers/google";
+import NextAuth, { AuthOptions } from "next-auth";
+import GoogleProvider from "next-auth/providers/google";
 import CredentialsProvider from "next-auth/providers/credentials";
 
-const handler = NextAuth({
+export const authOptions: AuthOptions = {
   providers: [
-    // ✅ Credentials Provider (Login page için)
+    // 1. E-Posta/Şifre Girişi
     CredentialsProvider({
       name: "Credentials",
       credentials: {
@@ -13,13 +12,9 @@ const handler = NextAuth({
         password: { label: "Password", type: "password" },
       },
       async authorize(credentials) {
-        if (!credentials?.email || !credentials?.password) {
-          console.error('❌ Credentials missing');
-          return null;
-        }
+        if (!credentials?.email || !credentials?.password) return null;
 
         try {
-          // Backend Login İsteği
           const res = await fetch(`${process.env.BACKEND_API_URL}/auth/login`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -29,107 +24,93 @@ const handler = NextAuth({
             }),
           });
 
-          if (!res.ok) {
-            const errorText = await res.text();
-            console.error('❌ Login failed:', errorText);
-            return null;
-          }
+          if (!res.ok) return null;
 
           const data = await res.json();
-          console.log('✅ Login success:', data.user_id);
           
-          // Backend'den gelen veriyi NextAuth User formatına çevir
+          // Backend'den gelen veriyi NextAuth'a teslim et
           return {
             id: data.user_id,
             email: data.email,
             name: data.username,
-            // DÜZELTME: Standart olması için 'accessToken' ismini kullanıyoruz
-            accessToken: data.access_token, 
+            accessToken: data.access_token, // Backend'deki JWT
             eula_accepted: data.eula_accepted,
           } as any;
         } catch (error) {
-          console.error('💥 Authorize error:', error);
+          console.error("Authorize error:", error);
           return null;
         }
       },
     }),
-    
-    // ✅ Google Provider
-    Google({
+
+    // 2. Google Girişi
+    GoogleProvider({
       clientId: process.env.GOOGLE_CLIENT_ID!,
       clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
-      authorization: { 
-        params: { 
-          prompt: "select_account", 
-          scope: "openid email profile" 
-        } 
+      authorization: {
+        params: {
+          prompt: "select_account",
+          scope: "openid email profile",
+        },
       },
     }),
   ],
-  
+
   callbacks: {
     async jwt({ token, account, user, trigger, session }) {
-      
-      // 1. Credentials login - user objesi ilk login'de gelir
+      // A) İlk Giriş Anı (Credentials)
       if (user) {
-        // DÜZELTME: apiToken yerine accessToken
-        (token as any).accessToken = (user as any).accessToken || (user as any).apiToken;
-        (token as any).userId = user.id;
-        (token as any).eula_accepted = (user as any).eula_accepted;
+        token.accessToken = (user as any).accessToken;
+        token.userId = user.id;
+        token.eula_accepted = (user as any).eula_accepted;
       }
-      
-      // 2. Google login - account.id_token var ise Backend'e git
+
+      // B) İlk Giriş Anı (Google)
       if (account?.id_token) {
         try {
           const res = await fetch(`${process.env.BACKEND_API_URL}/auth/google`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ id_token: account.id_token }),
-            cache: "no-store",
           });
-          
+
           if (res.ok) {
             const data = await res.json();
-            // DÜZELTME: apiToken yerine accessToken
-            (token as any).accessToken = data.access_token;
-            (token as any).userId = data.user_id;
-            (token as any).eula_accepted = data.eula_accepted;
-            console.log('✅ Google JWT set for:', data.user_id);
-          } else {
-            console.error('❌ Backend Google auth failed:', res.status);
+            token.accessToken = data.access_token; // Backend JWT
+            token.userId = data.user_id;
+            token.eula_accepted = data.eula_accepted;
           }
         } catch (error) {
-          console.error('💥 Google backend error:', error);
+          console.error("Google Auth Error:", error);
         }
       }
 
-      // 3. Session Update Trigger (EulaGuard tetiklediğinde çalışır)
+      // C) Session Güncelleme (EULA onayı gibi durumlar için)
       if (trigger === "update" && session?.eula_accepted !== undefined) {
-         (token as any).eula_accepted = session.eula_accepted;
+        token.eula_accepted = session.eula_accepted;
       }
-      
+
       return token;
     },
-    
+
     async session({ session, token }) {
-      // DÜZELTME: apiToken yerine accessToken olarak session'a aktarıyoruz
-      (session as any).accessToken = (token as any).accessToken ?? null;
-      (session as any).userId = (token as any).userId ?? null;
+      // Token'daki verileri Session'a aktar (Frontend görsün diye)
+      (session as any).accessToken = token.accessToken;
+      (session as any).userId = token.userId;
       
-      // session.user.eula_accepted olarak erişilebilecek
       if (session.user) {
-        (session.user as any).eula_accepted = (token as any).eula_accepted;
+        (session.user as any).eula_accepted = token.eula_accepted;
       }
-      
       return session;
     },
   },
-  
+
   session: { strategy: "jwt" },
   secret: process.env.NEXTAUTH_SECRET,
-  pages: { 
-    signIn: "/login"
+  pages: {
+    signIn: "/auth/login", // Kendi login sayfanızın yolu
   },
-});
+};
 
+const handler = NextAuth(authOptions);
 export { handler as GET, handler as POST };

@@ -1,13 +1,11 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Document, Page, pdfjs } from "react-pdf";
 import { useLanguage } from "@/context/LanguageContext";
 import "react-pdf/dist/Page/TextLayer.css";
 import "react-pdf/dist/Page/AnnotationLayer.css";
 
-// Worker ayarı
-pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.mjs";
 
 type Props = {
   file: File | string;
@@ -21,12 +19,18 @@ export default function PdfViewer({ file, height = 700 }: Props) {
   const [page, setPage] = useState(1);
   const [pageInput, setPageInput] = useState("1");
 
-  // Sayfa inputunu güncelle
+  // --- KRİTİK AYAR: HARF SORUNU ÇÖZÜMÜ ---
+  // Bu options objesi, PDF içindeki sıkıştırılmış karakterleri (özellikle Türkçe)
+  // çözmek için gerekli haritaları yükler. useMemo ile sarmaladık ki her render'da tekrar yüklemesin.
+  const options = useMemo(() => ({
+    cMapUrl: "/cmaps/", // next.config.ts ile public/cmaps içine kopyalamıştık
+    cMapPacked: true,
+  }), []);
+
   useEffect(() => {
     setPageInput(String(page));
   }, [page]);
 
-  // Yeni dosya geldiğinde sayfayı başa al
   useEffect(() => {
     setPage(1);
     setPageInput("1");
@@ -47,7 +51,6 @@ export default function PdfViewer({ file, height = 700 }: Props) {
 
   return (
     <div className="w-full flex flex-col gap-3">
-      
       {/* --- TOOLBAR --- */}
       <div 
         className="flex flex-wrap items-center justify-between gap-3 p-3 rounded-xl border shadow-sm"
@@ -130,14 +133,9 @@ export default function PdfViewer({ file, height = 700 }: Props) {
             borderColor: 'var(--container-border)' 
         }}
       >
-        {/* DÜZELTME:
-            - createObjectURL kaldırıldı.
-            - ArrayBuffer kaldırıldı.
-            - `file` prop'u doğrudan Document bileşenine verildi.
-            - react-pdf dosya türünü (String URL veya File objesi) kendi algılayıp yönetir.
-        */}
         <Document
           file={file}
+          options={options} // <-- Harf sorununu çözen ayar buraya eklendi
           onLoadSuccess={({ numPages }) => {
             setNumPages(numPages);
           }}

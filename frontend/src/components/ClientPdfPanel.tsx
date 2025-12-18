@@ -1,12 +1,24 @@
 "use client";
 
+import { usePathname } from "next/navigation"; // ✅ URL kontrolü
 import { usePdf } from "@/context/PdfContext";
-import { useLanguage } from "@/context/LanguageContext"; // ✅ Dil desteği eklendi
+import { useLanguage } from "@/context/LanguageContext";
 
 export default function ClientPdfPanel() {
+  const pathname = usePathname(); // ✅ Mevcut sayfa yolunu al
   const { pdfFile, savePdf, clearPdf } = usePdf();
   const { t } = useLanguage();
 
+  // ✅ Panelin GİZLENMESİ gereken sayfalar
+  // (Buraya /profile yolunu da ekledik, böylece profil sayfasında panel çıkmayacak)
+  const hiddenPaths = ["/", "/login", "/register", "/profile"];
+
+  // Eğer bu sayfalardan birindeysek, paneli hiç render etme
+  if (hiddenPaths.includes(pathname)) {
+    return null;
+  }
+
+  // PDF yoksa da gösterme
   if (!pdfFile) return null;
 
   return (

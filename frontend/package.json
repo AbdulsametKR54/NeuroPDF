@@ -9,13 +9,18 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@hello-pangea/dnd": "^18.0.1",
+    "framer-motion": "^12.23.26",
+    "lucide-react": "^0.561.0",
     "next": "15.5.4",
     "next-auth": "^4.24.11",
     "pdfjs-dist": "^5.3.93",
     "react": "19.1.0",
     "react-dom": "19.1.0",
     "react-dropzone": "^14.3.8",
-    "react-pdf": "^10.1.0"
+    "react-markdown": "^10.1.0",
+    "react-pdf": "^10.1.0",
+    "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",

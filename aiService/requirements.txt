@@ -6,7 +6,8 @@ celery
 redis
 google-generativeai
 PyPDF2
-zemberek-python
+#zemberek-python
 httpx
 pydantic-settings  
 python-dotenv
+gTTS

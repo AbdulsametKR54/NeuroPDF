@@ -18,19 +18,30 @@ export default function AuthBar() {
   if (session?.user) {
     return (
       <div className="flex items-center gap-3">
-        {/* Kullanıcı Adı (Mobilde gizlenebilir) */}
-        <span 
-          className="hidden md:inline-block text-sm font-medium opacity-80 truncate max-w-[150px]" 
+        
+        {/* ✅ GÜNCELLENDİ: Kullanıcı Adı Butonu */}
+        <button 
+          onClick={() => router.push('/profile')} // Burayı '/dashboard' veya '/settings' yapabilirsin
+          className="hidden md:flex items-center gap-2 px-3 py-2 rounded-xl transition-all duration-200
+                     text-sm font-medium opacity-80 hover:opacity-100 hover:scale-105
+                     bg-transparent hover:bg-gray-100 dark:hover:bg-gray-800 border border-transparent hover:border-[var(--navbar-border)]"
+          title="Profilime Git"
         >
-          {session.user.name || session.user.email}
-        </span>
+          {/* İkon: Kullanıcı */}
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" />
+          </svg>
+
+          <span className="truncate max-w-[120px]">
+            {session.user.name || session.user.email}
+          </span>
+        </button>
         
         {/* Çıkış Yap Butonu */}
         <button
           onClick={() => signOut()}
-          // whitespace-nowrap: Tek satırda kalmasını garanti eder
           className="px-4 py-2 text-xs sm:text-sm font-bold rounded-xl border transition-all shadow-sm whitespace-nowrap
-                     text-red-600 border-red-200 bg-red-50 hover:bg-red-100 
+                     text-red-600 border-red-200 bg-red-50 hover:bg-red-100 hover:scale-105
                      dark:text-red-400 dark:border-red-900 dark:bg-red-900/10 dark:hover:bg-red-900/30"
         >
           {t('signOut')}
@@ -43,7 +54,6 @@ export default function AuthBar() {
   return (
     <button
       onClick={() => router.push("/login")}
-      // ✅ BURASI DEĞİŞTİ: Senin global.css'indeki sınıfı kullanıyoruz
       className="btn-primary whitespace-nowrap" 
     >
       {t('loginLink')}

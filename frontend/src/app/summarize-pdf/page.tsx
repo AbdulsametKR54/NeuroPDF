@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useState, useRef, useEffect } from "react";
 import { useDropzone } from "react-dropzone";
 import { useSession } from "next-auth/react";
 import dynamic from "next/dynamic";
@@ -9,12 +9,22 @@ import { useGuestLimit } from "@/hooks/useGuestLimit";
 import UsageLimitModal from "@/components/UsageLimitModal";
 import { usePdf } from "@/context/PdfContext";
 import { useLanguage } from "@/context/LanguageContext";
+import { sendRequest } from "@/utils/api";
+import { getMaxUploadBytes } from "@/app/config/fileLimits";
+import PdfChatPanel from "@/components/PdfChatPanel";
 
 const PdfViewer = dynamic(() => import("@/components/PdfViewer"), { ssr: false });
 const MarkdownViewer = dynamic(() => import("@/components/MarkdownViewer"), { ssr: false });
 
+const formatTime = (seconds: number) => {
+  if (!seconds || isNaN(seconds)) return "00:00";
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60);
+  return `${mins < 10 ? "0" : ""}${mins}:${secs < 10 ? "0" : ""}${secs}`;
+};
+
 export default function SummarizePdfPage() {
-  const { data: session } = useSession();
+  const { data: session, status } = useSession();
   const { pdfFile } = usePdf();
   const { t } = useLanguage();
 
@@ -23,182 +33,242 @@ export default function SummarizePdfPage() {
   const [summarizing, setSummarizing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Chat State
+  const [showChat, setShowChat] = useState(false);
+
+  // Audio State
+  const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [audioLoading, setAudioLoading] = useState(false); 
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  // ✅ Limit Hesaplama
+  const isGuest = status !== "authenticated";
+  const maxBytes = getMaxUploadBytes(isGuest);
+
   const { usageInfo, showLimitModal, checkLimit, closeLimitModal, redirectToLogin } = useGuestLimit();
 
-  const onDrop = useCallback((acceptedFiles: File[]) => {
-    if (acceptedFiles?.length) {
-      setFile(acceptedFiles[0]);
+  const resetAudio = () => {
+    setAudioUrl(null);
+    setIsPlaying(false);
+    setCurrentTime(0);
+    setDuration(0);
+  };
+
+  const resetState = (f: File) => {
+      setFile(f);
       setSummary("");
       setError(null);
+      resetAudio();
+      setShowChat(false);
+  };
+
+  // --- DROPZONE AYARLARI ---
+  const onDrop = useCallback((acceptedFiles: File[]) => {
+    if (acceptedFiles?.length) {
+      const f = acceptedFiles[0];
+      if (f.size > maxBytes) {
+        setFile(null);
+        setError(`${t('fileSizeExceeded') || 'Dosya boyutu sınırı aşıldı'} (Max: ${(maxBytes / (1024 * 1024)).toFixed(0)} MB)`);
+        return;
+      }
+      resetState(f);
     }
-  }, []);
+  }, [maxBytes, t]);
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
     multiple: false,
     accept: { "application/pdf": [".pdf"] },
+    maxSize: maxBytes,
+    onDropRejected: (fileRejections) => {
+        const rejection = fileRejections[0];
+        if (rejection.errors[0].code === "file-too-large") {
+            setError(`${t('fileSizeExceeded') || 'Dosya boyutu sınırı aşıldı'} (Max: ${(maxBytes / (1024 * 1024)).toFixed(0)} MB)`);
+        } else {
+            setError(rejection.errors[0].message);
+        }
+        setFile(null);
+    },
   });
 
-  const handleDropFromPanel = (e?: React.DragEvent<HTMLDivElement>) => {
+  // --- YAN PANEL KONTROLÜ ---
+  const handleDropFromPanel = (e?: React.DragEvent<HTMLDivElement> | React.MouseEvent) => {
     if (pdfFile) {
-      setFile(pdfFile);
-      setSummary("");
-      setError(null);
+      if (pdfFile.size > maxBytes) {
+        setFile(null);
+        setError(`${t('fileSizeExceeded') || 'Dosya boyutu sınırı aşıldı'} (Max: ${(maxBytes / (1024 * 1024)).toFixed(0)} MB)`);
+        return;
+      }
+      resetState(pdfFile);
       if (e && 'stopPropagation' in e) {
         e.stopPropagation();
         e.preventDefault();
       }
     } else {
-      setError(t('panelPdfError'));
+      setError(t('panelPdfError') || "Aktif bir PDF bulunamadı.");
     }
   };
 
+  // --- DOSYA SEÇ BUTONU KONTROLÜ ---
   const handleSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
     if (f) {
-      setFile(f);
-      setSummary("");
-      setError(null);
+      if (f.size > maxBytes) {
+        setFile(null);
+        setError(`${t('fileSizeExceeded') || 'Dosya boyutu sınırı aşıldı'} (Max: ${(maxBytes / (1024 * 1024)).toFixed(0)} MB)`);
+        e.target.value = '';
+        return;
+      }
+      resetState(f);
     }
     e.target.value = '';
   };
 
+  // --- ÖZETLEME İŞLEMİ ---
   const handleSummarize = async () => {
     if (!file) {
-      setError(t('uploadFirst'));
+      setError(t('uploadFirst') || "Lütfen önce bir dosya yükleyin.");
       return;
     }
-
     if (!session) {
       const canProceed = await checkLimit();
       if (!canProceed) return;
     }
-
     setError(null);
-    setSummarizing(true); // Yükleniyor sahnesini başlat
+    setSummarizing(true);
+    resetAudio();
 
     try {
       const formData = new FormData();
       formData.append('file', file);
+      const data = await sendRequest("/files/summarize", "POST", formData, true);
 
-      const token = (session as any)?.apiToken || (session as any)?.user?.accessToken;
-      const headers: Record<string, string> = {};
-      if (token) headers['Authorization'] = `Bearer ${token}`;
-
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-      const response = await fetch(`${apiUrl}/files/summarize`, {
-        method: 'POST',
-        body: formData,
-        headers
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => null);
-        throw new Error(errorData?.detail || t('summarizeFailed'));
+      if (data && data.summary) {
+        setSummary(data.summary);
+      } else {
+        throw new Error("Özet alınamadı.");
       }
-
-      const data = await response.json();
-      setSummary(data.summary);
 
       if (!session) {
-        try {
-            await guestService.incrementUsage();
-        } catch (limitError) {
-            console.error("Sayaç güncellenemedi:", limitError);
-        }
+        try { await guestService.incrementUsage(); } catch (e) { console.error(e); }
       }
-
     } catch (e: any) {
       console.error("PDF Özetleme Hatası:", e);
-      setError(e?.message || t('error'));
+      setError(e?.message || t('error') || "Bir hata oluştu.");
     } finally {
-      setSummarizing(false); // Yükleniyor sahnesini kapat
+      setSummarizing(false);
     }
   };
 
+  // --- SESLENDİRME İŞLEMİ (TTS) ---
+  const handleListen = async () => {
+    if (!summary) return;
+    if (audioUrl) { togglePlay(); return; }
+    setAudioLoading(true);
+    setError(null);
+    try {
+        const audioBlob = await sendRequest("/files/listen-summary", "POST", { text: summary });
+        if (!(audioBlob instanceof Blob)) throw new Error("Ses verisi alınamadı.");
+        const objectUrl = window.URL.createObjectURL(audioBlob);
+        setAudioUrl(objectUrl);
+    } catch (e: any) {
+        setError("Seslendirme servisine ulaşılamadı.");
+    } finally {
+        setAudioLoading(false);
+    }
+  };
+
+  // --- PDF İNDİRME ---
   const handleDownloadPdf = async () => {
     if (!summary) return;
     setError(null);
-
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-      const token = (session as any)?.apiToken || (session as any)?.user?.accessToken;
-      
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json', 
-      };
-      if (token) headers['Authorization'] = `Bearer ${token}`;
-
-      const response = await fetch(`${apiUrl}/files/markdown-to-pdf`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ markdown: summary }), 
-      });
-
-      if (!response.ok) {
-        const text = await response.text();
-        throw new Error(text || 'PDF indirilemedi');
-      }
-
-      const blob = await response.blob();
+      const blob = await sendRequest("/files/markdown-to-pdf", "POST", { markdown: summary });
+      if (!(blob instanceof Blob)) throw new Error("PDF oluşturulamadı.");
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = "summary.pdf";
+      a.download = "ozet-summary.pdf";
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
-
     } catch (e: any) {
-      console.error("PDF İndirme Hatası:", e);
       setError(e?.message || 'Hata oluştu');
     }
   };
 
+  // --- Audio Kontrolleri ---
+  const togglePlay = () => {
+    if (audioRef.current) {
+        if (isPlaying) audioRef.current.pause();
+        else audioRef.current.play();
+        setIsPlaying(!isPlaying);
+    }
+  };
+  const handleTimeUpdate = () => { if (audioRef.current) setCurrentTime(audioRef.current.currentTime); };
+  const handleLoadedMetadata = () => { if (audioRef.current) { setDuration(audioRef.current.duration); audioRef.current.play().then(()=>setIsPlaying(true)).catch(()=>setIsPlaying(false)); } };
+  const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => { const time = parseFloat(e.target.value); if (audioRef.current) { audioRef.current.currentTime = time; setCurrentTime(time); } };
+  const skipTime = (seconds: number) => { if (audioRef.current) audioRef.current.currentTime += seconds; };
+
+  useEffect(() => {
+    return () => { if (audioUrl) window.URL.revokeObjectURL(audioUrl); };
+  }, [audioUrl]);
+
   const handleNew = () => {
     setFile(null);
     setSummary("");
+    resetAudio();
     setError(null);
+    setShowChat(false);
   };
 
   return (
     <main className="min-h-screen p-6 max-w-4xl mx-auto font-bold text-[var(--foreground)] relative">
       
-      {/* Yükleniyor Ara Sahnesi (Overlay) */}
-      {summarizing && (
+      <audio 
+        ref={audioRef} src={audioUrl || undefined} onTimeUpdate={handleTimeUpdate} 
+        onLoadedMetadata={handleLoadedMetadata} onEnded={() => setIsPlaying(false)} 
+        onPause={() => setIsPlaying(false)} onPlay={() => setIsPlaying(true)} className="hidden" 
+      />
+
+      {/* --- YÜKLENİYOR OVERLAY --- */}
+      {(summarizing || audioLoading) && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm transition-all">
             <div className="flex flex-col items-center justify-center p-8 rounded-2xl shadow-2xl border border-[var(--navbar-border)]"
                  style={{ backgroundColor: 'var(--container-bg)' }}>
                 
-                {/* Dönen Çember */}
                 <div className="relative w-20 h-20">
                     <div className="absolute top-0 left-0 w-full h-full border-4 border-[var(--navbar-border)] rounded-full opacity-30"></div>
                     <div className="absolute top-0 left-0 w-full h-full border-4 border-t-[var(--button-bg)] rounded-full animate-spin"></div>
                 </div>
 
-                {/* ✅ Çeviri: 'Özetleniyor...' */}
                 <h2 className="mt-6 text-2xl font-bold tracking-tight animate-pulse" style={{ color: 'var(--foreground)' }}>
-                    {t('summarizing')}...
+                    {audioLoading ? (t('preparingAudio') || "Ses hazırlanıyor...") : (t('summarizingStatus') || "Yapay Zeka Özetliyor...")}
                 </h2>
                 
-                {/* ✅ Çeviri: Bekleme Mesajı */}
                 <p className="mt-2 text-sm font-medium opacity-60 max-w-xs text-center" style={{ color: 'var(--foreground)' }}>
-                    {t('waitMessage')} 
+                    {audioLoading 
+                        ? (t('waitAudioGen') || "Bu işlem biraz sürebilir...") 
+                        : (t('waitMessage') || "PDF içeriği analiz ediliyor, lütfen bekleyin...")} 
                 </p>
             </div>
         </div>
       )}
 
-      <h1 className="text-3xl mb-6 tracking-tight">{t('summarizeTitle')}</h1>
+      <h1 className="text-3xl mb-6 tracking-tight">{t('summarizeTitle') || "PDF Özetleyici"}</h1>
 
+      {/* Misafir Bilgilendirme */}
       {usageInfo && !showLimitModal && !session && (
         <div className="info-box mb-4">
           {usageInfo.message}
         </div>
       )}
 
-      {/* Dropzone */}
+      {/* Dropzone Alanı */}
       <div
         {...getRootProps()}
         onDrop={handleDropFromPanel}
@@ -224,7 +294,10 @@ export default function SummarizePdfPage() {
       </div>
 
       <div className="mt-6 flex justify-start">
-        <label className="btn-primary cursor-pointer shadow-md hover:scale-105">
+        <label className="btn-primary cursor-pointer shadow-md hover:scale-105 flex items-center gap-2">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z" />
+          </svg>
           {t('selectFile')}
           <input type="file" className="hidden" accept=".pdf" onChange={handleSelect} />
         </label>
@@ -241,68 +314,135 @@ export default function SummarizePdfPage() {
 
             <button
                 onClick={handleSummarize}
-                // Özetleme sırasında butonu disable ediyoruz (Overlay zaten kapatacak ama güvenlik önlemi)
                 disabled={summarizing}
-                className="btn-primary w-full sm:w-auto px-8 py-3 shadow-lg hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="btn-primary w-full sm:w-auto px-8 py-3 shadow-lg hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
-                {t('summarizeButton')}
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456zM16.894 20.567L16.5 21.75l-.394-1.183a2.25 2.25 0 00-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 001.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 001.423 1.423l1.183.394-1.183.394a2.25 2.25 0 00-1.423 1.423z" />
+                </svg>
+                {t('summarizeButton') || "Özetle"}
             </button>
         </div>
       )}
 
+      {/* Özet Sonucu ve Aksiyonlar */}
       {summary && (
         <div className="mt-6 space-y-6">
+          
           <div className="container-card p-6 border border-gray-300 dark:border-[var(--container-border)] shadow-xl">
              <h3 className="text-xl mb-4 font-semibold border-b border-[var(--navbar-border)] pb-2">{t('summaryResultTitle') || "Özet Sonucu"}</h3>
              <MarkdownViewer markdown={summary} height={400} />
           </div>
 
-          <div className="container-card p-6 border border-gray-300 dark:border-[var(--container-border)] shadow-xl">
-             <h3 className="text-xl mb-4 font-bold flex items-center gap-2" style={{ color: 'var(--foreground)' }}>
+          <div className="container-card p-6 border border-gray-300 dark:border-[var(--container-border)] shadow-xl space-y-4">
+             <h3 className="text-xl font-bold flex items-center gap-2" style={{ color: 'var(--foreground)' }}>
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6 text-green-500">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
-                {t('processSuccess')}
+                {t('processSuccess') || "İşlem Başarılı"}
             </h3>
 
-            <div className="flex gap-4 flex-wrap">
-                <button
-                onClick={handleDownloadPdf}
-                className="btn-primary shadow-md hover:scale-105"
-                >
-                {t('downloadPdf')}
-                </button>
+            {/* BUTON GRUBU */}
+            <div className="flex gap-4 flex-wrap items-center mt-4 pb-2">
                 
-                <button
-                onClick={handleNew}
-                className="btn-primary shadow-md hover:scale-105"
+                {/* ✅ PDF İNDİR BUTONU (İKONLU) */}
+                <button 
+                  onClick={handleDownloadPdf} 
+                  className="btn-primary flex items-center gap-2 shadow-md hover:scale-105"
                 >
-                {t('newProcess')}
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M12 12.75l-3-3m0 0l3-3m-3 3h7.5" />
+                  </svg>
+                  {t('downloadPdf') || "PDF Olarak İndir"}
+                </button>
+
+                {session ? (
+                    <button onClick={handleListen} disabled={audioLoading} className={`flex items-center gap-2 px-6 py-3 rounded-xl font-semibold transition-all shadow-md hover:scale-105 ${
+                        (audioUrl || audioLoading) ? "bg-[var(--button-bg)] text-white" : "bg-[var(--container-bg)] border border-[var(--navbar-border)] text-[var(--foreground)] hover:bg-[var(--button-bg)] hover:text-white"}`}>
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M19.114 5.636a9 9 0 010 12.728M16.463 8.288a5.25 5.25 0 010 7.424M6.75 8.25l4.72-4.72a.75.75 0 011.28.53v15.88a.75.75 0 01-1.28.53l-4.72-4.72H4.51c-.88 0-1.704-.507-1.938-1.354A9.01 9.01 0 012.25 12c0-.83.112-1.633.322-2.396C2.806 8.756 3.63 8.25 4.51 8.25H6.75z" />
+                        </svg>
+                        {audioLoading ? (t('loading') || "Hazırlanıyor...") : (t('listenSummary') || "Özeti Dinle")}
+                    </button>
+                ) : (
+                    <div className="relative group">
+                        <button disabled className="flex items-center gap-2 px-6 py-3 rounded-xl font-semibold bg-gray-200 dark:bg-gray-800 text-gray-400 cursor-not-allowed">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
+                            </svg>
+                            {t('listenSummary') || "Özeti Dinle"}
+                        </button>
+                    </div>
+                )}
+
+                {/* SOHBET ET BUTONU */}
+                {session && (
+                  <button
+                    onClick={() => setShowChat(!showChat)}
+                    className="flex items-center gap-2 px-6 py-3 rounded-xl font-semibold transition-all shadow-md hover:scale-105 bg-indigo-600 hover:bg-indigo-700 text-white"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M8.625 12a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H8.25m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H12m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 01-2.555-.337A5.972 5.972 0 015.41 20.97a5.969 5.969 0 01-.474-.065 4.48 4.48 0 00.978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.159 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25z" />
+                    </svg>
+                    Sohbet Et
+                  </button>
+                )}
+                
+                {/* ✅ YENİ İŞLEM BUTONU (İKONLU) */}
+                <button 
+                  onClick={handleNew} 
+                  className="btn-primary flex items-center gap-2 shadow-md hover:scale-105"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                  </svg>
+                  {t('newProcess') || "Yeni İşlem"}
                 </button>
             </div>
 
-            {!session && (
-              <p className="mt-4 text-sm opacity-80">
-                💡 <a href="/login" className="underline font-bold" style={{ color: 'var(--button-bg)' }}>{t('loginWarning')}</a>
-              </p>
+            {audioUrl && (
+                <div className="bg-[var(--background)] p-4 rounded-xl border border-[var(--navbar-border)] animate-in fade-in slide-in-from-top-4 duration-500">
+                    <div className="flex items-center gap-3 mb-2">
+                        <span className="text-xs font-mono opacity-70 w-10 text-right">{formatTime(currentTime)}</span>
+                        <input type="range" min="0" max={duration || 0} value={currentTime} onChange={handleSeek} className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700 accent-[var(--button-bg)]" />
+                        <span className="text-xs font-mono opacity-70 w-10">{formatTime(duration)}</span>
+                    </div>
+                    <div className="flex justify-center items-center gap-6">
+                        <button onClick={() => skipTime(-10)} className="p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-full transition"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" /></svg></button>
+                        <button onClick={togglePlay} className="w-12 h-12 flex items-center justify-center rounded-full bg-[var(--button-bg)] text-white hover:scale-110 transition shadow-lg">{isPlaying ? <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 5.25v13.5m-7.5-13.5v13.5" /></svg> : <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6 ml-1"><path strokeLinecap="round" strokeLinejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z" /></svg>}</button>
+                        <button onClick={() => skipTime(10)} className="p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-full transition"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg></button>
+                    </div>
+                </div>
             )}
           </div>
         </div>
       )}
 
       {error && (
-        <div className="mt-6 p-4 rounded-xl border border-red-200 bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-200 dark:border-red-800">
-          ⚠️ {error}
+        <div className="error-box mt-6 shadow-sm">
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 24 24"
+            fill="currentColor"
+            className="w-6 h-6 shrink-0"
+          >
+            <path
+              fillRule="evenodd"
+              d="M9.401 3.003c1.155-2 4.043-2 5.197 0l7.355 12.748c1.154 2-.29 4.5-2.599 4.5H4.645c-2.309 0-3.752-2.5-2.598-4.5L9.4 3.003zM12 8.25a.75.75 0 01.75.75v3.75a.75.75 0 01-1.5 0V9a.75.75 0 01.75-.75zm0 8.25a.75.75 0 100-1.5.75.75 0 000 1.5z"
+              clipRule="evenodd"
+            />
+          </svg>
+
+          <span>{error}</span>
         </div>
       )}
 
-      <UsageLimitModal
-        isOpen={showLimitModal}
-        onClose={closeLimitModal}
-        onLogin={redirectToLogin}
-        usageCount={usageInfo?.usage_count}
-        maxUsage={3}
-      />
+
+      <UsageLimitModal isOpen={showLimitModal} onClose={closeLimitModal} onLogin={redirectToLogin} usageCount={usageInfo?.usage_count} maxUsage={3} />
+
+      {file && (
+        <PdfChatPanel file={file} isOpen={showChat} onClose={() => setShowChat(false)} />
+      )}
     </main>
   );
 }

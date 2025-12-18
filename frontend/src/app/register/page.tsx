@@ -3,10 +3,13 @@
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useLanguage } from "@/context/LanguageContext";
+import { sendRequest } from "@/utils/api"; // ✅ Merkezi API
+import { usePdf } from "@/context/PdfContext"; // ✅ YENİ: Paneli kapatmak için
 
 export default function RegisterPage() {
   const router = useRouter();
   const { t, language } = useLanguage();
+  const { savePdf } = usePdf(); // Context'i aldık
 
   // Form State
   const [form, setForm] = useState({
@@ -27,6 +30,12 @@ export default function RegisterPage() {
 
   const scrollRef = useRef<HTMLDivElement>(null);
 
+  // 🔹 1. Sayfa yüklendiğinde Sağ Paneli KAPAT
+  useEffect(() => {
+    // Context'teki dosyayı temizle -> Layout paneli kapatır
+    savePdf(null as any); 
+  }, [savePdf]);
+
   // ---------------------------------------------------------
   // EULA Fetching & Timer Logic
   // ---------------------------------------------------------
@@ -34,24 +43,28 @@ export default function RegisterPage() {
     let timer: NodeJS.Timeout;
 
     if (showEulaModal) {
-      // 1. Metni Backend'den Çek
+      // 2. Metni Backend'den Çek (sendRequest ile)
       const fetchEula = async () => {
         try {
-          const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-          const res = await fetch(`${apiUrl}/auth/eula?lang=${language}`);          
-          if (res.ok) {
-            const text = await res.text();
-            setEulaContent(text);
+          // sendRequest Blob veya JSON dönebilir
+          const response = await sendRequest(`/auth/eula?lang=${language}`, "GET");
+          
+          let text = "";
+          if (response instanceof Blob) {
+             text = await response.text();
           } else {
-            setEulaContent("Failed to load license agreement.");
+             text = typeof response === 'string' ? response : JSON.stringify(response);
           }
+          
+          setEulaContent(text);
         } catch (error) {
-          setEulaContent("Error loading agreement.");
+          console.error("EULA Error:", error);
+          setEulaContent("Failed to load license agreement.");
         }
       };
       fetchEula();
 
-      // 2. Sayacı Başlat
+      // 3. Sayacı Başlat
       setTimeLeft(20); 
       setHasScrolledToBottom(false);
       
@@ -69,7 +82,6 @@ export default function RegisterPage() {
   const handleScroll = () => {
     if (scrollRef.current) {
       const { scrollTop, scrollHeight, clientHeight } = scrollRef.current;
-      // Tolerans payı (10px) ile en alta gelindi mi kontrolü
       if (scrollTop + clientHeight >= scrollHeight - 10) {
         setHasScrolledToBottom(true);
       }
@@ -98,31 +110,20 @@ export default function RegisterPage() {
     setLoading(true);
 
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-      
-      const res = await fetch(`${apiUrl}/auth/register`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        // EULA onayını backend'e gönderiyoruz
-        body: JSON.stringify({ ...form, eula_accepted: true }),
-      });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        throw new Error(data.detail || t('registerError'));
-      }
+      // ✅ sendRequest ile Kayıt
+      await sendRequest("/auth/register", "POST", { ...form, eula_accepted: true });
 
       alert(t('registerSuccess'));
       setTimeout(() => router.push("/login"), 2000);
+
     } catch (err: any) {
-      alert(err.message || t('error'));
+      console.error("Register Error:", err);
+      alert(err.message || t('registerError'));
     } finally {
       setLoading(false);
     }
   };
 
-  // "Kabul Et" butonunun aktif olması için gereken şartlar
   const canAccept = timeLeft === 0 && hasScrolledToBottom;
 
   return (
@@ -229,9 +230,7 @@ export default function RegisterPage() {
         </div>
       </div>
 
-      {/* --------------------------------------------------------- */}
       {/* EULA MODAL */}
-      {/* --------------------------------------------------------- */}
       {showEulaModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
           <div 
@@ -256,7 +255,7 @@ export default function RegisterPage() {
               <div className="h-10"></div>
             </div>
 
-            {/* Modal Footer (Action Buttons) */}
+            {/* Modal Footer */}
             <div className="p-6 border-t border-[var(--navbar-border)] flex flex-col md:flex-row items-center justify-between gap-4">
               
               <div className="text-xs opacity-70 flex flex-col gap-1">
@@ -282,18 +281,13 @@ export default function RegisterPage() {
                   {language === 'tr' ? "Vazgeç" : "Cancel"}
                 </button>
                 
-                {/* --- BUTON RENGİ BURADA DÜZELTİLDİ --- */}
                 <button
                   onClick={handleAcceptEula}
                   disabled={!canAccept}
                   className="px-6 py-2 rounded-lg font-bold transition-all"
                   style={{ 
-                    // Aktifken --button-bg, pasifken gri
                     backgroundColor: canAccept ? 'var(--button-bg)' : 'gray',
-                    
-                    // Aktifken --button-text (global.css), pasifken beyaz
                     color: canAccept ? 'var(--button-text)' : 'white',
-                    
                     cursor: canAccept ? 'pointer' : 'not-allowed',
                     opacity: canAccept ? 1 : 0.5
                   }}

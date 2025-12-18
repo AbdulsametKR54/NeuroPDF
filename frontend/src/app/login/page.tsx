@@ -4,18 +4,26 @@ import { signIn, useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { guestService } from "@/services/guestService";
-import { useLanguage } from "@/context/LanguageContext"; // <--- 1. Import
+import { useLanguage } from "@/context/LanguageContext";
+import { usePdf } from "@/context/PdfContext"; // ✅ YENİ: Paneli kapatmak için
 
 export default function LoginPage() {
   const { data: session, status } = useSession();
   const router = useRouter();
-  const { t } = useLanguage(); // <--- 2. Hook
+  const { t } = useLanguage();
+  const { savePdf } = usePdf(); // ✅ Context
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
 
+  // 🔹 1. Sayfa Yüklendiğinde Sağ Paneli KAPAT
+  useEffect(() => {
+    savePdf(null as any); 
+  }, [savePdf]);
+
+  // 🔹 2. Oturum Kontrolü
   useEffect(() => {
     if (status === "authenticated") {
       router.push("/");
@@ -49,7 +57,7 @@ export default function LoginPage() {
       }
     } catch (err) {
       console.error(err);
-      setErrorMsg(t('loginError')); // <--- Translated
+      setErrorMsg(t('loginError'));
     } finally {
       setLoading(false);
     }

@@ -22,14 +22,13 @@ export const translations = {
 
     // --- LANDING PAGE (Ana Sayfa) ---
     landingDescription: "PDF belgelerini yükle, yapay zeka ile özetle ve analiz et. Hızlı, güvenli ve kolay bir deneyim seni bekliyor.",
-    guestLogin: "Misafir Girişi",
-    guestLoggingIn: "Giriş Yapılıyor...",
-    guestLoginError: "Misafir oturumu oluşturulamadı.",
-    signOut: "Çıkış Yap",
-    sessionChecking: "Oturum bilgisi kontrol ediliyor...",
+    startNow: "Hemen Başla",
+    activeUsers: "Aktif Kullanıcı",
+    filesProcessed: "İşlenen Dosya",
+    aiOperations: "AI İşlemi",
     loggedInAs: "Giriş yapıldı:",
     notLoggedIn: "Henüz giriş yapmadın.",
-
+    
     // --- AUTH (Giriş & Kayıt) ---
     loginTitle: "Hesabınıza giriş yapın",
     registerTitle: "Hesap Oluştur",
@@ -51,6 +50,10 @@ export const translations = {
     noAccount: "Hesabın yok mu?",
     hasAccount: "Zaten hesabın var mı?",
     createAccount: "Hemen Oluştur",
+    guestLogin: "Misafir Girişi",
+    guestLoggingIn: "Giriş Yapılıyor...",
+    guestLoginError: "Misafir oturumu oluşturulamadı.",
+    sessionChecking: "Oturum bilgisi kontrol ediliyor...",
 
     // --- UPLOAD PAGE (Yükleme Sayfası) ---
     uploadPageTitle: "Neuro PDF — Yükleme",
@@ -71,13 +74,13 @@ export const translations = {
     selectedFile: "Seçilen:",
 
     // --- CONVERT TEXT PAGE (Metin Dönüştürme Sayfası) ---
-    pageTitle: "Neuro PDF — PDF'ten Metin Dönüştürücü", // convert-pdf sayfası için
+    pageTitle: "Neuro PDF — PDF'ten Metin Dönüştürücü",
     textConvertedTitle: "📄 Metin Dönüştürüldü:",
     textReadyMessage: "Metin dosyası hazır! İndirerek tüm içeriği görebilirsiniz.",
     converting: "Metin Dönüştürülüyor...",
     convertText: "Metni Dönüştür",
-    dropActive: "Dosyayı bırakın, yüklemeye hazırlansın...", // <--- EKLENDİ (Hata düzeltmesi)
-    dropPassive: "PDF'yi buraya sürükleyip bırakın veya aşağıdaki butonlarla seçin", // <--- EKLENDİ (Hata düzeltmesi)
+    dropActive: "Dosyayı bırakın, yüklemeye hazırlansın...",
+    dropPassive: "PDF'yi buraya sürükleyip bırakın veya aşağıdaki butonlarla seçin",
 
     // --- MERGE PAGE (Birleştirme Sayfası) ---
     mergePageTitle: "Neuro PDF — PDF Birleştirici",
@@ -100,6 +103,8 @@ export const translations = {
     unknownMergeError: "Bilinmeyen birleştirme hatası",
     mergeFailed: "Birleştirme başarısız oldu",
     pdfAddedToPanel: "✅ PDF sağ panelde görünecek!",
+    fileSizeExceeded: "Dosya boyutu sınırı aşıldı.",
+    totalSizeExceeded: "Toplam dosya boyutu sınırı aşıldı",
 
     // --- EXTRACT PAGE (Sayfa Çıkarma Sayfası) ---
     extractPageTitle: "Neuro PDF — Sayfa Çıkarıcı",
@@ -129,7 +134,7 @@ export const translations = {
     emptyPdfError: "Boş PDF alındı.",
     selectPdfFirst: "Lütfen önce bir PDF seçin.",
 
-    // --- SUMMARİZE PAGE (PDF ÖZETLETME)
+    // --- SUMMARİZE PAGE (PDF ÖZETLETME) ---
     summarizeTitle: "📄 PDF Özeti",
     summarizeFailed: "Özetleme başarısız oldu.",
     summarizing: "Özetleniyor...",
@@ -139,6 +144,11 @@ export const translations = {
     downloadPdf: "PDF Olarak İndir",
     newProcess: "Yeni İşlem",
     summaryResult: "Özet Sonucu",
+    preparingAudio: "Ses Hazırlanıyor...",
+    summarizingStatus: "Özetleniyor...",
+    listenSummary: "Özeti Dinle",
+    waitAudioGen: "Yapay zeka metni sese çevirirken lütfen bekleyin.",
+    waitPdfAnalysis: "PDF analizi yapılıyor, bu işlem biraz sürebilir.",
 
     // --- PDF VIEWER & PANEL ---
     activePdfTitle: "📄 Aktif PDF",
@@ -148,13 +158,36 @@ export const translations = {
     pdfLoading: "PDF Yükleniyor...",
     pdfError: "PDF görüntülenemedi.",
     page: "Sayfa",
-    
-    // PdfViewer Çevirileri
     prev: "Önceki",
     next: "Sonraki",
     pdfLoadError: "PDF yüklenemedi.",
     preparingFile: "Dosya hazırlanıyor...",
     
+    // --- PROFILE & ACCOUNT ---
+    profileTitle: "Profilim",
+    goBack: "Geri Dön",
+    defaultUser: "Kullanıcı",
+    signOut: "Çıkış Yap",
+    membershipType: "Üyelik Tipi",
+    standardAccount: "Standart Hesap",
+    aiSummary: "AI Özetleme",
+    pdfTools: "PDF Araçları",
+    processCount: "İşlem",
+    accountSettings: "Hesap Ayarları",
+    accountSettingsHint: "Şifre değişikliği ve hesap silme işlemleri için sağlayıcınızın (Google) ayarlarını kullanmanız gerekmektedir.",
+    changeEmail: "E-posta Değiştir",
+    downloadData: "Verilerimi İndir",
+    comingSoon: "Yakında",
+    deleteAccount: "Hesabımı Sil",
+    deleteAccountTitle: "Hesabınızı Silmek İstiyor musunuz?",
+    deleteAccountWarning: "Bu işlem geri alınamaz. Tüm verileriniz, yüklediğiniz dosyalar ve istatistikleriniz kalıcı olarak silinecektir.",
+    deleteAccountConfirm: "Hesabınızı ve tüm verilerinizi kalıcı olarak silmek istediğinize emin misiniz? Bu işlem geri alınamaz!",
+    deleteAccountError: "Hesap silinirken bir hata oluştu.",
+    deletingAccount: "Hesap Siliniyor...",
+    pleaseWait: "Verileriniz temizleniyor, lütfen bekleyin...",
+    cancel: "Vazgeç",
+    confirmDelete: "Evet, Hesabı Sil",
+
     // --- ORTAK EYLEMLER (Common Actions) ---
     download: "İndir",
     saveToFiles: "Dosyalarıma Kaydet",
@@ -192,15 +225,14 @@ export const translations = {
 
     // --- LANDING PAGE ---
     landingDescription: "Upload PDF documents, summarize and analyze with AI. A fast, secure, and easy experience awaits you.",
-    guestLogin: "Guest Login",
-    guestLoggingIn: "Logging in...",
-    guestLoginError: "Guest session creation failed.",
-    signOut: "Sign Out",
-    sessionChecking: "Checking session info...",
+    startNow: "Start Now",
+    activeUsers: "Active Users",
+    filesProcessed: "Files Processed",
+    aiOperations: "AI Operations",
     loggedInAs: "Logged in as:",
     notLoggedIn: "You have not logged in yet.",
 
-    // --- AUTH (Login & Register) ---
+    // --- AUTH ---
     loginTitle: "Sign in to your account",
     registerTitle: "Create Account",
     registerSubtitle: "Join us today",
@@ -221,6 +253,10 @@ export const translations = {
     noAccount: "Don't have an account?",
     hasAccount: "Already have an account?",
     createAccount: "Create Now",
+    guestLogin: "Guest Login",
+    guestLoggingIn: "Logging in...",
+    guestLoginError: "Guest session creation failed.",
+    sessionChecking: "Checking session info...",
 
     // --- UPLOAD PAGE ---
     uploadPageTitle: "Neuro PDF — Upload",
@@ -246,8 +282,8 @@ export const translations = {
     textReadyMessage: "Text file is ready! You can download to see full content.",
     converting: "Converting Text...",
     convertText: "Convert Text",
-    dropActive: "Drop the file to prepare upload...", // <--- EKLENDİ
-    dropPassive: "Drag & drop PDF here or select using buttons below", // <--- EKLENDİ
+    dropActive: "Drop the file to prepare upload...",
+    dropPassive: "Drag & drop PDF here or select using buttons below",
 
     // --- MERGE PAGE ---
     mergePageTitle: "Neuro PDF — PDF Merger",
@@ -270,6 +306,8 @@ export const translations = {
     unknownMergeError: "Unknown merge error",
     mergeFailed: "Merge failed",
     pdfAddedToPanel: "✅ PDF will appear in the right panel!",
+    fileSizeExceeded: "File size limit exceeded.",
+    totalSizeExceeded: "Total file size limit exceeded",
 
     // --- EXTRACT PAGE ---
     extractPageTitle: "Neuro PDF — Page Extractor",
@@ -308,6 +346,11 @@ export const translations = {
     waitMessage: "This process may take some time depending on the file size. Please wait.",
     downloadPdf: "Download PDF",
     summaryResult: "Summary Result",
+    preparingAudio: "Preparing Audio...",
+    summarizingStatus: "Summarizing...",
+    listenSummary: "Listen to Summary",
+    waitAudioGen: "Please wait while AI converts text to speech.",
+    waitPdfAnalysis: "Analyzing PDF, this may take a moment.",
 
     // --- PDF VIEWER & PANEL ---
     activePdfTitle: "📄 Active PDF",
@@ -317,13 +360,35 @@ export const translations = {
     pdfLoading: "Loading PDF...",
     pdfError: "PDF could not be displayed.",
     page: "Page",
-
-    // PdfViewer Translations
     prev: "Previous",
     next: "Next",
     pdfLoadError: "PDF could not be loaded.",
     preparingFile: "Preparing file...",
     
+    // --- PROFILE & ACCOUNT ---
+    profileTitle: "My Profile",
+    goBack: "Go Back",
+    defaultUser: "User",
+    signOut: "Sign Out",
+    membershipType: "Membership Type",
+    standardAccount: "Standard Account",
+    aiSummary: "AI Summaries",
+    pdfTools: "PDF Tools",
+    processCount: "Tasks",
+    accountSettings: "Account Settings",
+    accountSettingsHint: "Please use your provider's (Google) settings for password changes and account deletion.",
+    changeEmail: "Change Email",
+    downloadData: "Download Data",
+    comingSoon: "Soon",
+    deleteAccount: "Delete Account",
+    deleteAccountTitle: "Do you want to delete your account?",
+    deleteAccountWarning: "This action cannot be undone. All your data, uploaded files, and statistics will be permanently deleted.",
+    deleteAccountConfirm: "Are you sure you want to permanently delete your account and all data? This action cannot be undone!",
+    deleteAccountError: "An error occurred while deleting the account.",
+    deletingAccount: "Deleting Account...",
+    pleaseWait: "Clearing your data, please wait...",
+    cancel: "Cancel",
+    confirmDelete: "Yes, Delete Account",
 
     // --- COMMON ACTIONS ---
     download: "Download",

@@ -17,3 +17,4 @@ pypdf
 redis
 httpx
 email-validator
+reportlab
