@@ -112,24 +112,24 @@ services:
 
 
   # 6. Local LLM (Ollama)
-  # ollama:
-  #   image: ollama/ollama:latest
-  #   container_name: pdf_designer_llm
-  #   ports:
-  #     - "11434:11434"
-  #   volumes:
-  #     - ollama_storage:/root/.ollama
-  #   # Eğer GPU yoksa aşağıdaki 'deploy' kısmını komple silmelisin.
-  #   # deploy:
-  #   #   resources:
-  #   #     reservations:
-  #   #       devices:
-  #   #         - driver: nvidia
-  #   #           count: 1
-  #   #           capabilities: [gpu]
-  #   networks:
-  #     - app_network
-  #   restart: always
+  ollama:
+    image: ollama/ollama:latest
+    container_name: pdf_designer_llm
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_storage:/root/.ollama
+    # Eğer GPU yoksa aşağıdaki 'deploy' kısmını komple silmelisin.
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+    networks:
+      - app_network
+    restart: always
 
 
 

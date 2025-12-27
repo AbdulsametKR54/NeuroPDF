@@ -1,52 +1,68 @@
-import zeyrek
+# app/services/text_cleaner.py
+from __future__ import annotations
+
+import contextlib
+import io
+import logging
 import re
-import nltk # nltk kütüphanesini ekle
+from functools import lru_cache
+from typing import List
+
+import nltk
+import zeyrek
+
+log = logging.getLogger(__name__)
+
+_WORD_RE = re.compile(r"\b[a-zA-ZçÇğĞıİöÖşŞüÜ]+\b")
 
 
-# Docker içinde NLTK verileri eksikse indir
-try:
-    nltk.data.find('tokenizers/punkt_tab')
-except LookupError:
-    print("NLTK verileri indiriliyor...")
-    nltk.download('punkt_tab')
-    nltk.download('punkt')
+@contextlib.contextmanager
+def _suppress_output():
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        yield
 
 
-# Analizörü global olarak başlatıyoruz (Sadece uygulama açılırken 1 kere yüklenir, hız kazandırır)
-print("Zeyrek (MorphAnalyzer) yükleniyor... Lütfen bekleyin.")
-analyzer = zeyrek.MorphAnalyzer()
-print("Zeyrek yüklendi!")
+def _ensure_nltk():
+    # Bazı ortamlarda "punkt" yeterli, bazılarında "punkt_tab" arıyor.
+    # Sessizce dener, yoksa indirir.
+    try:
+        nltk.data.find("tokenizers/punkt")
+    except LookupError:
+        with _suppress_output():
+            nltk.download("punkt")
 
-def detect_unknown_words(text: str) -> list:
+    try:
+        nltk.data.find("tokenizers/punkt_tab")
+    except LookupError:
+        with _suppress_output():
+            nltk.download("punkt_tab")
+
+
+@lru_cache(maxsize=1)
+def _get_analyzer() -> zeyrek.MorphAnalyzer:
+    _ensure_nltk()
+    # Zeyrek init ve analiz sırasında stdout basabiliyor, bunu bastırıyoruz.
+    with _suppress_output():
+        return zeyrek.MorphAnalyzer()
+
+
+def detect_unknown_words(text: str) -> List[str]:
     """
-    Metindeki kelimeleri tarar. Zeyrek'in analiz edemediği (Sözlükte bulamadığı)
-    kelimeleri 'şüpheli' olarak listeler.
+    Zeyrek'in analiz edemediği kelimeleri "şüpheli" diye döndürür.
     """
-    if not text:
+    if not text or not text.strip():
         return []
 
-    # Noktalama işaretlerini temizle ve kelimelere böl
-    # Sadece harflerden oluşan kelimeleri alıyoruz
-    words = re.findall(r'\b[a-zA-ZçÇğĞıİöÖşŞüÜ]+\b', text)
-    
-    unknown_words = []
-    
-    for word in words:
-        # Kelime çok kısaysa (1-2 harf) atla (ve, bu, şu vb. hatalı çıkmasın)
-        if len(word) < 2:
-            continue
-            
-        # Zeyrek analizi
-        results = analyzer.analyze(word.lower())
-        
-        # Eğer Zeyrek hiçbir kök/ek bulamadıysa, bu kelime muhtemelen hatalıdır
-        if not results:
-            unknown_words.append(word)
-            
-    # Tekrarlanan kelimeleri temizle (set)
-    return list(set(unknown_words))
+    analyzer = _get_analyzer()
+    words = _WORD_RE.findall(text)
 
-# Test Bloğu
-if __name__ == "__main__":
-    test_text = "Bugün hava cok guzel ama arabayı park etcek yer yok."
-    print("Şüpheliler:", detect_unknown_words(test_text))
+    unknown = set()
+    for w in words:
+        if len(w) < 2:
+            continue
+        with _suppress_output():
+            results = analyzer.analyze(w.lower())
+        if not results:
+            unknown.add(w)
+
+    return sorted(unknown)

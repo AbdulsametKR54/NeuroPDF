@@ -1,11 +1,15 @@
 from fastapi import FastAPI
-from .routers import analysis # Birazdan oluşturacağımız router
+from .routers import analysis  # senin /api/v1/ai routerın
 
 app = FastAPI(title="AI Service")
 
-# API endpoint'lerini dahil et
 app.include_router(analysis.router)
 
-@app.get("/health")
-def health_check():
-    return {"status": "ok"}
+@app.get("/")
+def root():
+    return {
+        "status": "ok",
+        "service": "aiService",
+        "docs": "/docs",
+        "health": "/api/v1/ai/health",
+    }

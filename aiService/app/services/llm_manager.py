@@ -1,99 +1,82 @@
-# import ollama
-# import os
-# import json
-# import re
-# from app.services.text_cleaner import detect_unknown_words
+from fastapi import HTTPException
+from typing import Literal, Optional
 
-# #OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://ollama:11434")
+from . import ai_service  # gemini tarafın
+from .local_llm_service import analyze_text_with_local_llm  #  yerel LLM tarafı
+from typing import Literal
 
-# OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+LLMProvider = Literal["cloud", "local"]
+CloudMode = Literal["flash", "pro"]
 
-# def extract_json(text: str):
-#     try:
-#         match = re.search(r'\{.*\}', text, re.DOTALL)
-#         if match:
-#             return json.loads(match.group(0))
-#         return None
-#     except Exception:
-#         return None
+def summarize_text(
+    text: str,
+    prompt_instruction: str,
+    llm_provider: LLMProvider = "cloud",
+    mode: CloudMode = "flash",
+) -> str:
+    if not text or not text.strip():
+        raise HTTPException(status_code=400, detail="Boş içerik gönderildi.")
 
-# def analyze_text_with_ai(text: str):
-#     print(f"Gemma2 (Çift Aşamalı Analiz)... Host: {OLLAMA_HOST}")
-    
-#     # 1. ZEYREK TARAMASI
-#     try:
-#         suspects = detect_unknown_words(text)
-#         suspects_str = ", ".join(suspects) if suspects else "Yok"
-#     except Exception:
-#         suspects_str = "Hata"
+    if llm_provider == "cloud":
+        return ai_service.gemini_generate(text, prompt_instruction, mode=mode)
 
-#     # --- AŞAMA 1: DÜZELTME (ROBOT MODU) ---
-#     # Burada yaratıcılık SIFIR. Sadece tamirat.
-#     correction_system_prompt = """
-#     Sen bir Yazım Denetleme Motorusun.
-#     Görevin: Metindeki 'şeuler' -> 'şeyler', 'gidiyom' -> 'gidiyorum' gibi hataları bulmaktır.
-#     ASLA yeni kelime uydurma. Sadece bozuk kelimeleri onar.
-#     """
-    
-#     correction_user_prompt = f"""
-#     METİN: "{text}"
-#     HATALI KELİME İPUÇLARI: [{suspects_str}]
-    
-#     ÇIKTI (SADECE JSON):
-#     {{
-#         "corrected_text": "Metnin tamamen düzeltilmiş hali buraya",
-#         "corrections": [
-#             {{ "original": "hatalı", "corrected": "doğru", "reason": "sebep" }}
-#         ]
-#     }}
-#     """
-    
-#     client = ollama.Client(host=OLLAMA_HOST)
-    
-#     try:
-#         # Adım 1: Düzeltme İsteği (Temperature 0.0 - En güvenli)
-#         correction_response = client.chat(model='gemma2', messages=[
-#           {'role': 'system', 'content': correction_system_prompt},
-#           {'role': 'user', 'content': correction_user_prompt},
-#         ], options={'temperature': 0.0}) 
-        
-#         correction_data = extract_json(correction_response['message']['content'])
-        
-#         if not correction_data:
-#             # Eğer JSON bozuksa ham metni kullan
-#             correction_data = {"corrected_text": text, "corrections": []}
-            
-#         corrected_text = correction_data.get("corrected_text", text)
-#         corrections_list = correction_data.get("corrections", [])
+    if llm_provider == "local":
+        # local LLM’de prompt+text’i birleştirip analiz/özet ürettiriyoruz
+        # (yerelde "summary" dönmesini sağlayacağız)
+        result = analyze_text_with_local_llm(text, task="summarize", instruction=prompt_instruction)
+        return result.get("summary", "") or "Local LLM yanıt üretmedi."
 
-#         # --- AŞAMA 2: ÖZETLEME (YAZAR MODU) ---
-#         # Şimdi elimizde düzgün metin var. Artık yaratıcı olabiliriz.
-#         summary_system_prompt = """
-#         Sen yetenekli bir Edebiyatçısın.
-#         Görevin: Sana verilen düzgün metni, akıcı ve anlamlı bir İstanbul Türkçesi ile özetlemektir.
-#         Özeti yazarken metnin duygusunu koru ama gereksiz tekrarlardan kaçın.
-#         """
-        
-#         summary_user_prompt = f"""
-#         METİN: "{corrected_text}"
-        
-#         Lütfen bu metni en güzel ve anlamlı şekilde özetle (Tek paragraf).
-#         """
-        
-#         # Adım 2: Özet İsteği (Temperature 0.4 - Biraz yaratıcılık serbest)
-#         summary_response = client.chat(model='gemma2', messages=[
-#           {'role': 'system', 'content': summary_system_prompt},
-#           {'role': 'user', 'content': summary_user_prompt},
-#         ], options={'temperature': 0.4})
-        
-#         final_summary = summary_response['message']['content']
+    raise HTTPException(status_code=400, detail="Geçersiz llm_provider. 'cloud' veya 'local' olmalı.")
 
-#         # SONUÇLARI BİRLEŞTİR
-#         return {
-#             "summary": final_summary,
-#             "corrections": corrections_list
-#         }
 
-#     except Exception as e:
-#         print(f"LLM Hatası: {str(e)}")
-#         return {"summary": "Analiz sırasında hata oluştu.", "corrections": []}
+def chat_over_pdf(
+    session_text: str,
+    filename: str,
+    history_text: str,
+    user_message: str,
+    llm_provider: LLMProvider = "cloud",
+    mode: CloudMode = "pro",
+) -> str:
+    if llm_provider == "cloud":
+        # mevcut ai_service.chat_with_pdf’nin prompt yapısını koruyalım:
+        # onun içinden provider seçmek yerine, burada prompt’u hazırlayıp gemini çağıracağız.
+        # En az değişiklik: ai_service’e yeni bir fonksiyon ekleyelim:
+        return ai_service.gemini_chat(prompt=_build_chat_prompt(session_text, filename, history_text, user_message), mode=mode)
+
+    if llm_provider == "local":
+        result = analyze_text_with_local_llm(
+            _build_chat_prompt(session_text, filename, history_text, user_message),
+            task="chat",
+            instruction="PDF asistanı gibi yanıt ver. Türkçe, net ve pratik ol."
+        )
+        # local taraf chatte direkt metin döndürebilir:
+        return result.get("answer") or result.get("summary") or "Local LLM yanıt üretmedi."
+
+    raise HTTPException(status_code=400, detail="Geçersiz llm_provider.")
+
+
+def _build_chat_prompt(pdf_context: str, filename: str, history_text: str, user_message: str) -> str:
+    system_instruction = (
+        "Sen bir PDF asistanısın. Kullanıcının yüklediği PDF'e dayanarak cevap ver.\n"
+        "Eğer PDF'te açıkça yoksa, bunu belirt ve kullanıcıdan sayfa/başlık gibi ipucu iste.\n"
+        "Cevaplarını Türkçe ver, net ve pratik ol.\n"
+    )
+
+    return f"""
+{system_instruction}
+
+DOSYA: {filename}
+
+PDF İÇERİĞİ:
+---
+{pdf_context}
+---
+
+SOHBET GEÇMİŞİ:
+---
+{history_text}
+---
+
+KULLANICI SORUSU:
+{user_message}
+""".strip()
