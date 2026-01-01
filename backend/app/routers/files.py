@@ -9,13 +9,17 @@ import io
 import re
 import os
 from datetime import datetime, timezone
+from sqlalchemy.orm import Session
 
 # --- Config & DB ---
 from ..config import settings
-from ..db import get_supabase, Client
-from ..storage import storage_service
-from ..routers.auth import get_current_user
+from ..db import get_supabase, Client, get_db
+from ..storage import save_pdf_to_db, get_pdf_from_db, delete_pdf_from_db, list_user_pdfs
+from ..deps import get_current_user, get_current_user_from_header
 from ..models import UserStatsResponse
+import logging
+
+logger = logging.getLogger(__name__)
 
 # --- ReportLab Importları (PDF Oluşturma İçin) ---
 from reportlab.pdfgen import canvas
@@ -51,18 +55,18 @@ try:
     if os.path.exists(regular_font_path):
         pdfmetrics.registerFont(TTFont('SourceSansPro-Regular', regular_font_path))
         FONT_NAME_REGULAR = 'SourceSansPro-Regular'
-        print(f"✅ Normal Font Yüklendi: {regular_font_path}")
+        logger.info(f"Normal Font Yüklendi: {regular_font_path}")
     
     if os.path.exists(bold_font_path):
         pdfmetrics.registerFont(TTFont('SourceSansPro-Bold', bold_font_path))
         FONT_NAME_BOLD = 'SourceSansPro-Bold'
-        print(f"✅ Kalın Font Yüklendi: {bold_font_path}")
+        logger.info(f"Kalın Font Yüklendi: {bold_font_path}")
     else:
         if FONT_NAME_REGULAR != "Helvetica":
             FONT_NAME_BOLD = FONT_NAME_REGULAR
 
 except Exception as e:
-    print(f"❌ Font yükleme hatası: {e}")
+    logger.warning(f"Font yükleme hatası: {e}", exc_info=True)
 
 
 # ==========================================
@@ -92,14 +96,11 @@ async def increment_user_usage(user_id: str, supabase: Client, operation_type: s
     Kullanıcının işlem istatistiğini artırır.
     UPSERT yerine açık UPDATE/INSERT mantığı kullanır.
     """
-    print(f"\n📈 [ISTATISTIK GÜNCELLEME] ------------------------------------------------")
-    print(f"👤 User ID    : {user_id}")
-    print(f"🛠️ İşlem Tipi : {operation_type}")
+    logger.debug(f"ISTATISTIK GÜNCELLEME - User ID: {user_id}, İşlem Tipi: {operation_type}")
 
     # Misafir kontrolü
     if not user_id or str(user_id).startswith("guest"):
-        print("🚫 Misafir kullanıcı, istatistik tutulmuyor.")
-        print("--------------------------------------------------------------------------\n")
+        logger.debug("Misafir kullanıcı, istatistik tutulmuyor.")
         return
     
     target_column = "summary_count" if operation_type == "summary" else "tools_count"
@@ -107,7 +108,6 @@ async def increment_user_usage(user_id: str, supabase: Client, operation_type: s
 
     try:
         # 1. ADIM: Kullanıcının istatistik kaydı var mı?
-        print("🔍 Mevcut veri aranıyor...")
         res = supabase.table("user_stats").select("*").eq("user_id", user_id).execute()
         
         # Kayıt bulunduysa -> GÜNCELLE (UPDATE)
@@ -116,7 +116,7 @@ async def increment_user_usage(user_id: str, supabase: Client, operation_type: s
             current_val = current_data.get(target_column, 0)
             new_val = current_val + 1
             
-            print(f"🔹 Mevcut Değer: {current_val} -> Yeni Değer: {new_val}")
+            logger.debug(f"User stats update - {target_column}: {current_val} -> {new_val}")
             
             update_data = {
                 target_column: new_val,
@@ -125,11 +125,11 @@ async def increment_user_usage(user_id: str, supabase: Client, operation_type: s
             
             # Sadece ilgili satırı güncelle
             supabase.table("user_stats").update(update_data).eq("user_id", user_id).execute()
-            print(f"✅ [GÜNCELLENDİ] Başarıyla artırıldı.")
+            logger.debug(f"User stats updated successfully for user: {user_id}")
 
         # Kayıt yoksa -> OLUŞTUR (INSERT)
         else:
-            print("🔹 Kayıt bulunamadı. Yeni kayıt oluşturuluyor...")
+            logger.debug(f"Creating new user stats record for user: {user_id}")
             new_data = {
                 "user_id": user_id,
                 "summary_count": 1 if target_column == "summary_count" else 0,
@@ -137,13 +137,11 @@ async def increment_user_usage(user_id: str, supabase: Client, operation_type: s
                 "last_activity": now_iso
             }
             supabase.table("user_stats").insert(new_data).execute()
-            print("✅ [OLUŞTURULDU] İlk istatistik kaydı eklendi.")
+            logger.debug(f"New user stats record created for user: {user_id}")
 
     except Exception as e:
-        print(f"❌ [KRİTİK HATA]: İstatistik güncellenemedi -> {e}")
+        logger.error(f"İstatistik güncellenemedi: {e}", exc_info=True)
         # Hatanın ne olduğunu görmek için exception'ı yazdırıyoruz ama akışı kırmıyoruz.
-    
-    print("--------------------------------------------------------------------------\n")
 
 def parse_page_ranges(range_str: str, max_pages: int) -> list[int]:
     """Sayfa aralığı stringini parse eder."""
@@ -187,7 +185,7 @@ async def summarize_file(
     user_id = None
     if authorization:
         try:
-            user_data = get_current_user(authorization)
+            user_data = get_current_user_from_header(authorization)
             user_id = user_data.get("sub")
             print(f"✅ Token Çözüldü. User ID: {user_id}")
         except Exception as e:
@@ -268,8 +266,8 @@ async def summarize_for_guest(
         }
     
     except Exception as e:
-        print(f"❌ Özetleme hatası: {e}")
-        raise HTTPException(status_code=500, detail=f"Özetleme başarısız: {str(e)}")
+        logger.error(f"Özetleme hatası: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Sunucu hatası")
 
 
 @router.post("/summarize-start/{file_id}")
@@ -705,7 +703,7 @@ async def listen_summary(
     user_id = None
     if authorization:
         try:
-            user_data = get_current_user(authorization)
+            user_data = get_current_user_from_header(authorization)
             user_id = user_data.get("sub")
             print(f"✅ Token Çözüldü. User ID: {user_id}")
         except:
@@ -744,7 +742,7 @@ async def upload_pdf(
     file: UploadFile = File(...),
     authorization: Optional[str] = Header(None),
     x_guest_id: Optional[str] = Header(None, alias="X-Guest-ID"),
-    supabase: Client = Depends(get_supabase)
+    db: Session = Depends(get_db)
 ):
     if file.content_type != "application/pdf":
         raise HTTPException(status_code=400, detail="Only PDF files allowed")
@@ -752,7 +750,7 @@ async def upload_pdf(
     user_id = None
     if authorization:
         try:
-            user_data = get_current_user(authorization)
+            user_data = get_current_user_from_header(authorization)
             user_id = user_data.get("sub")
         except:
             pass
@@ -764,58 +762,77 @@ async def upload_pdf(
     await validate_file_size(file, is_guest=is_guest_user)
     
     try:
-        upload_result = await storage_service.upload_file(file, user_id)
+        # PDF'i oku
+        pdf_content = await file.read()
+        filename = file.filename or "document.pdf"
         
+        # Sadece kayıtlı kullanıcılar için DB'ye kaydet
         if not is_guest_user:
-            document_data = {
-                "user_id": user_id,
-                "filename": upload_result["filename"],
-                "storage_path": upload_result["path"],
-                "status": "uploaded"
+            pdf_record = save_pdf_to_db(db, user_id, pdf_content, filename)
+            return {
+                "file_id": pdf_record.id,
+                "filename": pdf_record.filename or filename,
+                "file_size": pdf_record.file_size
             }
-            res = supabase.table("documents").insert(document_data).execute()
-            if res.data:
-                file_id = res.data[0]["id"]
-                return {"file_id": file_id, "filename": upload_result["filename"], "file_path": upload_result["path"]}
         
-        return {"filename": upload_result["filename"], "file_path": upload_result["path"]}
+        # Misafir kullanıcılar için sadece filename döndür (DB'ye kaydetmiyoruz)
+        return {"filename": filename, "message": "Guest upload - not saved to database"}
         
     except Exception as e:
-        print(f"Upload error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Upload error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Upload failed")
 
 @router.get("/my-files")
 async def get_my_files(
     current_user: dict = Depends(get_current_user),
-    supabase: Client = Depends(get_supabase)
+    db: Session = Depends(get_db)
 ):
     try:
         user_id = current_user.get("sub")
-        response = supabase.table("documents").select("id, filename, status, created_at").eq("user_id", user_id).order("created_at", desc=True).execute()
-        return {"files": response.data, "total": len(response.data)}
+        if not user_id:
+            raise HTTPException(status_code=401, detail="User ID not found")
+        
+        pdfs = list_user_pdfs(db, user_id)
+        files = [
+            {
+                "id": pdf.id,
+                "filename": pdf.filename,
+                "file_size": pdf.file_size,
+                "created_at": pdf.created_at.isoformat() if pdf.created_at else None
+            }
+            for pdf in pdfs
+        ]
+        return {"files": files, "total": len(files)}
+    except HTTPException:
+        raise
     except Exception as e:
+        logger.error(f"Get files error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.delete("/files/{file_id}")
 async def delete_file(
-    file_id: int,
+    file_id: str,
     current_user: dict = Depends(get_current_user),
-    supabase: Client = Depends(get_supabase)
+    db: Session = Depends(get_db)
 ):
     try:
         user_id = current_user.get("sub")
-        res = supabase.table("documents").select("*").eq("id", file_id).single().execute()
+        if not user_id:
+            raise HTTPException(status_code=401, detail="User ID not found")
         
-        if not res.data or res.data["user_id"] != user_id:
-            raise HTTPException(status_code=403, detail="Yetkisiz işlem")
+        # Önce PDF'in kullanıcıya ait olduğunu kontrol et
+        pdf = get_pdf_from_db(db, file_id, user_id)
+        if not pdf:
+            raise HTTPException(status_code=404, detail="PDF bulunamadı veya yetkiniz yok")
         
-        if os.path.exists(res.data["storage_path"]):
-            os.remove(res.data["storage_path"])
-        
-        supabase.table("documents").delete().eq("id", file_id).execute()
+        # PDF'i sil
+        delete_pdf_from_db(db, file_id, user_id)
         return {"message": "Silindi", "file_id": file_id}
         
+    except HTTPException:
+        raise
     except Exception as e:
+        logger.error(f"Delete file error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -871,14 +888,14 @@ async def extract_pdf_pages(
     supabase: Client = Depends(get_supabase)
 ):
     """Sayfa ayıklama."""
-    print("\n--- EXTRACT-PAGES İSTEĞİ ---")
+    logger.debug("EXTRACT-PAGES İSTEĞİ alındı")
     
     # USER ID ÇÖZÜMLEME
     user_id = None
     if authorization:
         try:
             user_id = get_current_user(authorization).get("sub")
-            print(f"✅ Token Çözüldü. User ID: {user_id}")
+            logger.debug(f"Token çözüldü. User ID: {user_id}")
         except: pass
 
     try:
@@ -903,8 +920,8 @@ async def extract_pdf_pages(
             
         return StreamingResponse(out, media_type="application/pdf", headers={"Content-Disposition": 'attachment; filename="extracted.pdf"'})
     except Exception as e:
-        print(f"Hata: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Extract pages hatası: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Sunucu hatası")
 
 
 @router.post("/merge-pdfs")
@@ -950,19 +967,30 @@ async def merge_pdfs(
 async def save_processed_pdf(
     file: UploadFile = File(...),
     filename: str = Form(...),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
 ):
     try:
         user_id = current_user.get("sub")
-        upload_result = await storage_service.upload_file(file, user_id)
+        if not user_id:
+            raise HTTPException(status_code=401, detail="User ID not found")
+        
+        # PDF'i oku
+        pdf_content = await file.read()
+        
+        # DB'ye kaydet
+        pdf_record = save_pdf_to_db(db, user_id, pdf_content, filename)
         
         return {
-            "filename": filename,
-            "size_kb": round(upload_result["size"] / 1024, 2),
-            "saved_path": upload_result["path"],
+            "file_id": pdf_record.id,
+            "filename": pdf_record.filename or filename,
+            "size_kb": round(pdf_record.file_size / 1024, 2) if pdf_record.file_size else 0,
             "message": "File saved successfully"
         }
+    except HTTPException:
+        raise
     except Exception as e:
+        logger.error(f"Save processed error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/reorder")

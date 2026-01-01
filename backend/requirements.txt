@@ -18,3 +18,5 @@ redis
 httpx
 email-validator
 reportlab
+Pillow
+google-generativeai
