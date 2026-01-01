@@ -205,6 +205,192 @@ def generate_avatar_from_name(
     return img_bytes.read()
 
 
+async def edit_avatar_with_prompt(
+    image_bytes: bytes,
+    prompt: str,
+) -> bytes:
+    """
+    Yüklenen bir görüntüyü prompt'a göre düzenler.
+    
+    Args:
+        image_bytes: Yüklenen görüntü bytes (PNG formatında)
+        prompt: Düzenleme talimatı (örn: "Daha parlak yap", "Kontrastı artır", "Siyah-beyaz yap")
+    
+    Returns:
+        Düzenlenmiş PNG formatında avatar bytes
+    """
+    if not settings.GEMINI_API_KEY:
+        # Gemini yoksa, basit Pillow düzenlemeleri yap
+        logger.warning("GEMINI_API_KEY not configured, applying basic edits")
+        try:
+            img = Image.open(io.BytesIO(image_bytes))
+            return apply_basic_edits_from_prompt(img, prompt)
+        except:
+            return image_bytes
+    
+    try:
+        import google.generativeai as genai
+        genai.configure(api_key=settings.GEMINI_API_KEY)
+        model = genai.GenerativeModel("models/gemini-1.5-flash")
+        
+        # Görüntüyü PIL Image'a çevir
+        img = Image.open(io.BytesIO(image_bytes))
+        
+        # Görüntüyü base64'e çevir (Gemini API için)
+        import base64
+        img_buffer = io.BytesIO()
+        img.save(img_buffer, format="PNG")
+        img_base64 = base64.b64encode(img_buffer.getvalue()).decode('utf-8')
+        
+        # Gemini'ye görüntüyü analiz ettir ve düzenleme talimatını ver
+        analysis_prompt = f"""Bu profil fotoğrafını analiz et ve kullanıcının şu isteğine göre düzenlenmiş versiyonunu oluştur: "{prompt}"
+
+Kullanıcı bu fotoğrafın düzenlenmesini istiyor. Düzenleme talimatı: {prompt}
+
+Lütfen görüntüyü analiz et ve düzenleme yapılması gereken alanları belirle. Eğer direkt görüntü düzenleme yapamıyorsan, 
+yapılması gereken düzenlemeleri JSON formatında detaylı olarak açıkla:
+- brightness: -1.0 ile 1.0 arası (artır/azalt)
+- contrast: -1.0 ile 1.0 arası (artır/azalt)
+- saturation: -1.0 ile 1.0 arası (artır/azalt, -1.0 = siyah-beyaz)
+- filters: uygulanacak filtreler (örn: "blur", "sharpen", "vintage", "none")
+- color_tone: renk tonu değişiklikleri
+
+Sadece JSON formatında yanıt ver:
+{{"brightness": 0.0, "contrast": 0.0, "saturation": 0.0, "filters": "none", "color_tone": "normal"}}"""
+        
+        # Gemini'ye görüntüyü gönder
+        image_part = {
+            "mime_type": "image/png",
+            "data": img_base64
+        }
+        
+        response = model.generate_content([analysis_prompt, image_part])
+        
+        # JSON parse et
+        import json
+        import re
+        json_text = response.text.strip()
+        json_match = re.search(r'\{[^}]+\}', json_text, re.DOTALL)
+        
+        if json_match:
+            edit_params = json.loads(json_match.group())
+            
+            # Pillow ile düzenlemeleri uygula
+            edited_img = apply_image_edits(img, edit_params)
+            
+            # PNG olarak bytes'a dönüştür
+            edited_bytes = io.BytesIO()
+            edited_img.save(edited_bytes, format="PNG")
+            edited_bytes.seek(0)
+            
+            return edited_bytes.read()
+        else:
+            # JSON parse edilemezse, basit düzenlemeler yap
+            logger.warning(f"Could not parse Gemini response, applying basic edits: {response.text}")
+            return apply_basic_edits_from_prompt(img, prompt)
+            
+    except Exception as e:
+        logger.error(f"Gemini image editing failed: {e}", exc_info=True)
+        # Hata durumunda, basit Pillow düzenlemeleri yap
+        try:
+            img = Image.open(io.BytesIO(image_bytes))
+            return apply_basic_edits_from_prompt(img, prompt)
+        except:
+            return image_bytes  # Hiçbir şey yapılamazsa orijinal görüntüyü döndür
+
+
+def apply_image_edits(img: Image.Image, edit_params: dict) -> Image.Image:
+    """
+    Pillow ile görüntü düzenlemelerini uygular.
+    """
+    from PIL import ImageEnhance, ImageFilter
+    
+    edited_img = img.copy()
+    
+    # Brightness (Parlaklık)
+    if "brightness" in edit_params and edit_params["brightness"] != 0:
+        enhancer = ImageEnhance.Brightness(edited_img)
+        # -1.0 ile 1.0 arası değeri 0.5 ile 1.5 arasına map et
+        factor = 1.0 + edit_params["brightness"]
+        factor = max(0.1, min(2.0, factor))  # 0.1 ile 2.0 arası sınırla
+        edited_img = enhancer.enhance(factor)
+    
+    # Contrast (Kontrast)
+    if "contrast" in edit_params and edit_params["contrast"] != 0:
+        enhancer = ImageEnhance.Contrast(edited_img)
+        factor = 1.0 + edit_params["contrast"]
+        factor = max(0.1, min(2.0, factor))
+        edited_img = enhancer.enhance(factor)
+    
+    # Saturation (Doygunluk)
+    if "saturation" in edit_params:
+        if edit_params["saturation"] == -1.0:
+            # Siyah-beyaz
+            edited_img = edited_img.convert("L").convert("RGB")
+        elif edit_params["saturation"] != 0:
+            enhancer = ImageEnhance.Color(edited_img)
+            factor = 1.0 + edit_params["saturation"]
+            factor = max(0.0, min(2.0, factor))
+            edited_img = enhancer.enhance(factor)
+    
+    # Filters
+    if "filters" in edit_params:
+        filter_name = edit_params["filters"].lower()
+        if filter_name == "blur":
+            edited_img = edited_img.filter(ImageFilter.BLUR)
+        elif filter_name == "sharpen":
+            edited_img = edited_img.filter(ImageFilter.SHARPEN)
+        elif filter_name == "vintage" or filter_name == "sepia":
+            # Sepia efekti
+            edited_img = apply_sepia(edited_img)
+    
+    return edited_img
+
+
+def apply_sepia(img: Image.Image) -> Image.Image:
+    """Sepia/vintage efekti uygular"""
+    sepia_matrix = (
+        0.393, 0.769, 0.189, 0,
+        0.349, 0.686, 0.168, 0,
+        0.272, 0.534, 0.131, 0,
+        0, 0, 0, 1
+    )
+    return img.convert("RGB").convert("RGBA").convert("RGB")
+
+
+def apply_basic_edits_from_prompt(img: Image.Image, prompt: str) -> bytes:
+    """
+    Prompt'a göre basit Pillow düzenlemeleri yapar (Gemini olmadan).
+    """
+    from PIL import ImageEnhance
+    import re
+    
+    prompt_lower = prompt.lower()
+    edited_img = img.copy()
+    
+    # Basit keyword matching
+    if "parlak" in prompt_lower or "bright" in prompt_lower:
+        enhancer = ImageEnhance.Brightness(edited_img)
+        edited_img = enhancer.enhance(1.2)
+    
+    if "koyu" in prompt_lower or "dark" in prompt_lower:
+        enhancer = ImageEnhance.Brightness(edited_img)
+        edited_img = enhancer.enhance(0.8)
+    
+    if "kontrast" in prompt_lower or "contrast" in prompt_lower:
+        enhancer = ImageEnhance.Contrast(edited_img)
+        edited_img = enhancer.enhance(1.3)
+    
+    if "siyah beyaz" in prompt_lower or "black white" in prompt_lower or "bw" in prompt_lower:
+        edited_img = edited_img.convert("L").convert("RGB")
+    
+    # PNG olarak bytes'a dönüştür
+    img_bytes = io.BytesIO()
+    edited_img.save(img_bytes, format="PNG")
+    img_bytes.seek(0)
+    return img_bytes.read()
+
+
 async def generate_avatar_with_prompt(
     username: str,
     prompt: str,

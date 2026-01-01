@@ -40,6 +40,7 @@ class Settings(BaseSettings):
     # AI Service
     # AI_SERVICE_URL: str = "http://aiservice:8001"
     AI_SERVICE_URL: str = "http://localhost:8001"
+    AI_SERVICE_API_KEY: Optional[str] = None  # API key for aiService authentication
     
     # Gemini API (Avatar generation için)
     GEMINI_API_KEY: Optional[str] = None

@@ -1,6 +1,6 @@
 # app/routers/user_avatar_routes.py
 
-from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, Body
+from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, Body, Form
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional, List
@@ -19,6 +19,7 @@ from app.services.avatar_service import (
     get_latest_avatar,
     save_temp_avatar,
     get_temp_avatar,
+    edit_avatar_with_prompt,
 )
 
 from app.models import UserAvatar
@@ -34,6 +35,14 @@ logger = logging.getLogger(__name__)
 
 class GenerateAvatarRequest(BaseModel):
     prompt: str  # Kullanıcının avatar açıklaması (zorunlu)
+
+
+class ConfirmAvatarRequest(BaseModel):
+    temp_avatar_id: str  # Geçici avatar ID'si (generate endpoint'inden dönen)
+
+
+class EditAvatarRequest(BaseModel):
+    prompt: str  # Düzenleme talimatı (örn: "Daha parlak yap", "Kontrastı artır", "Siyah-beyaz yap")
 
 
 class AvatarResponse(BaseModel):
@@ -231,10 +240,86 @@ async def generate_avatar_preview(
         raise HTTPException(status_code=500, detail=f"Failed to generate avatar: {str(e)}")
 
 
+@router.post("/{user_id}/avatar/edit")
+async def edit_avatar(
+    user_id: str,
+    file: UploadFile = File(...),
+    prompt: str = Form(...),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Yüklenen bir fotoğrafı prompt'a göre düzenler ve önizleme döndürür (henüz kaydetmez).
+    Kullanıcı onay verene kadar geçici olarak saklanır.
+    """
+    # Kullanıcı sadece kendi avatarını düzenleyebilir
+    if current_user["sub"] != user_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    
+    from app.models import User
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # 1) Dosya kontrolü
+    if file.content_type not in ["image/png", "image/jpeg", "image/jpg"]:
+        raise HTTPException(status_code=415, detail="Only PNG/JPEG files are allowed")
+
+    contents = await file.read()
+    if not contents:
+        raise HTTPException(status_code=400, detail="Empty file")
+    
+    # 2) PNG magic bytes kontrolü veya JPEG kontrolü
+    PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+    JPEG_MAGIC = b"\xff\xd8\xff"
+    
+    if not (contents.startswith(PNG_MAGIC) or contents.startswith(JPEG_MAGIC)):
+        raise HTTPException(status_code=415, detail="Invalid image file")
+    
+    # 3) Pillow ile doğrulama ve PNG'ye çevir
+    try:
+        img = Image.open(io.BytesIO(contents))
+        img.verify()
+        
+        # Tekrar aç (verify kapatır)
+        img = Image.open(io.BytesIO(contents))
+        
+        # PNG'ye çevir (avatar formatı PNG)
+        if img.format != "PNG":
+            png_buffer = io.BytesIO()
+            img.convert("RGB").save(png_buffer, format="PNG")
+            contents = png_buffer.getvalue()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid image file")
+    
+    if not prompt or not prompt.strip():
+        raise HTTPException(status_code=400, detail="Prompt is required")
+    
+    try:
+        # Fotoğrafı prompt'a göre düzenle
+        edited_avatar_bytes = await edit_avatar_with_prompt(contents, prompt)
+        
+        # Geçici olarak Redis'e kaydet (onay bekleyen)
+        temp_avatar_id = save_temp_avatar(user_id, edited_avatar_bytes, f"Edited: {prompt}")
+        
+        # Base64 encode et (frontend'de göstermek için)
+        avatar_base64 = base64.b64encode(edited_avatar_bytes).decode('utf-8')
+        
+        return {
+            "message": "Avatar edited successfully",
+            "temp_avatar_id": temp_avatar_id,
+            "preview_image": f"data:image/png;base64,{avatar_base64}",  # Data URL format
+            "prompt": prompt,
+        }
+    except Exception as e:
+        logger.error(f"Failed to edit avatar: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to edit avatar: {str(e)}")
+
+
 @router.post("/{user_id}/avatar/confirm")
 async def confirm_avatar(
     user_id: str,
-    request: dict = Body(...),  # {"temp_avatar_id": "..."}
+    request: ConfirmAvatarRequest,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
@@ -245,7 +330,7 @@ async def confirm_avatar(
     if current_user["sub"] != user_id:
         raise HTTPException(status_code=403, detail="Forbidden")
     
-    temp_avatar_id = request.get("temp_avatar_id")
+    temp_avatar_id = request.temp_avatar_id
     if not temp_avatar_id:
         raise HTTPException(status_code=400, detail="temp_avatar_id is required")
     

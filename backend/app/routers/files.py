@@ -16,7 +16,7 @@ from ..config import settings
 from ..db import get_supabase, Client, get_db
 from ..storage import save_pdf_to_db, get_pdf_from_db, delete_pdf_from_db, list_user_pdfs
 from ..deps import get_current_user, get_current_user_from_header
-from ..models import UserStatsResponse
+from ..models import UserStatsResponse, User
 import logging
 
 logger = logging.getLogger(__name__)
@@ -88,6 +88,31 @@ async def validate_file_size(file: UploadFile, is_guest: bool):
             status_code=413, 
             detail=f"{user_type} limiti aşıldı! Maksimum {limit_mb} MB dosya yükleyebilirsiniz."
         )
+
+
+def get_ai_service_headers() -> dict:
+    """AI Service'e yapılan istekler için header'ları hazırlar (API key dahil)."""
+    headers = {}
+    if settings.AI_SERVICE_API_KEY:
+        headers["X-API-Key"] = settings.AI_SERVICE_API_KEY
+    return headers
+
+
+def get_user_llm_provider(db: Session, user_id: str) -> str:
+    """
+    Kullanıcının DB'deki LLM tercihine göre provider string'i döndürür.
+    llm_choice_id: 0 = "local", 1 = "cloud"
+    Eğer kullanıcı bulunamazsa default "local" döner.
+    """
+    try:
+        user = db.query(User).filter(User.id == user_id).first()
+        if user:
+            # llm_choice_id: 0 = local llm, 1 = cloud llm
+            return "local" if user.llm_choice_id == 0 else "cloud"
+        return "local"  # Default: local (KVKK için güvenli)
+    except Exception as e:
+        logger.warning(f"Failed to get user LLM choice for {user_id}: {e}")
+        return "local"  # Default: local (KVKK için güvenli)
 
 # --- GÜNCELLENMİŞ VE LOGLAYAN HELPER FONKSİYONU ---
 
@@ -173,7 +198,8 @@ def parse_page_ranges(range_str: str, max_pages: int) -> list[int]:
 async def summarize_file(
     file: UploadFile = File(...),
     authorization: Optional[str] = Header(None),
-    supabase: Client = Depends(get_supabase)
+    supabase: Client = Depends(get_supabase),
+    db: Session = Depends(get_db)
 ):
     """Frontend'deki 'handleSummarize' fonksiyonunun çağırdığı SENKRON endpoint."""
     print("\n--- SUMMARIZE İSTEĞİ ---")
@@ -202,10 +228,19 @@ async def summarize_file(
         file_content = await file.read()
         files = {"file": ("upload.pdf", file_content, "application/pdf")}
         ai_service_url = f"{settings.AI_SERVICE_URL}/api/v1/ai/summarize-sync"
+        
+        # Kullanıcının LLM tercihini DB'den al
+        llm_provider = "local"  # Misafir için default
+        if user_id:
+            llm_provider = get_user_llm_provider(db, user_id)
+            user = db.query(User).filter(User.id == user_id).first()
+            print(f"📊 Kullanıcı LLM Tercihi: {llm_provider} (llm_choice_id: {user.llm_choice_id if user else 'N/A'})")
 
-        print(f"📡 AI Service İstek: {ai_service_url}")
+        print(f"📡 AI Service İstek: {ai_service_url} (llm_provider: {llm_provider})")
         async with httpx.AsyncClient(timeout=120.0, follow_redirects=True) as client:
-            response = await client.post(ai_service_url, files=files)
+            headers = get_ai_service_headers()
+            params = {"llm_provider": llm_provider}
+            response = await client.post(ai_service_url, files=files, params=params, headers=headers)
             
             if response.status_code != 200:
                 print(f"❌ AI Service Error: {response.text}")
@@ -251,9 +286,14 @@ async def summarize_for_guest(
         ai_service_url = f"{settings.AI_SERVICE_URL}/api/v1/ai/summarize-sync"
         file_content = await file.read()
         
+        # Misafir kullanıcılar için default: local (KVKK için güvenli)
+        llm_provider = "local"
+        
         async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
             files = {"file": (file.filename, file_content, "application/pdf")}
-            response = await client.post(ai_service_url, files=files)
+            headers = get_ai_service_headers()
+            params = {"llm_provider": llm_provider}
+            response = await client.post(ai_service_url, files=files, params=params, headers=headers)
             response.raise_for_status()
         
         result = response.json()
@@ -274,7 +314,8 @@ async def summarize_for_guest(
 async def trigger_summarize_task(
     file_id: int, 
     current_user: dict = Depends(get_current_user),
-    supabase: Client = Depends(get_supabase)
+    supabase: Client = Depends(get_supabase),
+    db: Session = Depends(get_db)
 ):
     """Asenkron özetleme görevi başlatır."""
     print("\n--- SUMMARIZE-START İSTEĞİ ---")
@@ -290,19 +331,25 @@ async def trigger_summarize_task(
         if file_data["user_id"] != user_id:
             raise HTTPException(status_code=403, detail="Erişim yetkiniz yok")
         
+        # Kullanıcının LLM tercihini DB'den al
+        llm_provider = get_user_llm_provider(db, user_id)
+        print(f"📊 Kullanıcı LLM Tercihi: {llm_provider}")
+        
         supabase.table("documents").update({"status": "processing"}).eq("id", file_id).execute()
         
         callback_url = f"http://backend:8000/files/callback/{file_id}"
         task_data = {
             "pdf_id": file_id,
             "storage_path": file_data["storage_path"],
-            "callback_url": callback_url
+            "callback_url": callback_url,
+            "llm_provider": llm_provider
         }
 
         ai_service_url = f"{settings.AI_SERVICE_URL}/api/v1/ai/summarize-async"
         
         async with httpx.AsyncClient(follow_redirects=True) as client:
-            response = await client.post(ai_service_url, json=task_data, timeout=10)
+            headers = get_ai_service_headers()
+            response = await client.post(ai_service_url, json=task_data, headers=headers, timeout=10)
             response.raise_for_status()
         
         # İSTATİSTİK (Async olduğu için burada sayıyoruz)
@@ -380,7 +427,8 @@ async def get_file_summary(
 @router.post("/chat/start")  # 👈 {file_id} kaldırıldı
 async def start_chat_session(
     file: UploadFile = File(...), # 👈 Direkt dosyayı alıyoruz
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
 ):
     """
     Veritabanına kaydetmeden, dosyayı direkt AI Service'e gönderir.
@@ -395,15 +443,22 @@ async def start_chat_session(
     try:
         # 2. Dosyayı belleğe oku
         file_content = await file.read()
+        
+        # 3. Kullanıcının LLM tercihini DB'den al
+        user_id = current_user.get("sub")
+        llm_provider = get_user_llm_provider(db, user_id) if user_id else "local"
+        print(f"📊 Kullanıcı LLM Tercihi: {llm_provider}")
 
-        # 3. AI Service'e Gönder (/chat/start)
+        # 4. AI Service'e Gönder (/chat/start)
         async with httpx.AsyncClient() as client:
             # AI Service'e dosyayı multipart/form-data olarak iletiyoruz
             files = {"file": (file.filename, file_content, "application/pdf")}
             target_url = f"{settings.AI_SERVICE_URL}/api/v1/ai/chat/start"
             
-            print(f"📡 AI Service'e gönderiliyor: {target_url}")
-            response = await client.post(target_url, files=files, timeout=60.0)
+            print(f"📡 AI Service'e gönderiliyor: {target_url} (llm_provider: {llm_provider})")
+            headers = get_ai_service_headers()
+            params = {"llm_provider": llm_provider}
+            response = await client.post(target_url, files=files, params=params, headers=headers, timeout=60.0)
             
             if response.status_code != 200:
                 print(f"❌ AI Service Hatası: {response.text}")
@@ -444,8 +499,8 @@ async def send_chat_message(
         async with httpx.AsyncClient(timeout=60.0) as client:
             payload = {"session_id": session_id, "message": message}
             target_url = f"{settings.AI_SERVICE_URL}/api/v1/ai/chat"
-            
-            response = await client.post(target_url, json=payload)
+            headers = get_ai_service_headers()
+            response = await client.post(target_url, json=payload, headers=headers)
             
             if response.status_code != 200:
                 error_detail = response.json().get("detail", "AI hatası")
@@ -716,7 +771,8 @@ async def listen_summary(
         client = None
         try:
             client = httpx.AsyncClient(timeout=120.0, follow_redirects=True)
-            async with client.stream("POST", ai_tts_url, json={"text": cleaned_text}) as response:
+            headers = get_ai_service_headers()
+            async with client.stream("POST", ai_tts_url, json={"text": cleaned_text}, headers=headers) as response:
                 if response.status_code != 200:
                     return 
                 async for chunk in response.aiter_bytes():
