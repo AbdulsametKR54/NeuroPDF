@@ -1,4 +1,4 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException, Query
+from fastapi import APIRouter, UploadFile, File, HTTPException, Query, Depends, Security
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -6,6 +6,7 @@ from ..tasks import pdf_tasks
 from ..services import ai_service, pdf_service
 from ..services.tts_manager import text_to_speech
 from ..services.llm_manager import CloudMode, LLMProvider, summarize_text, chat_over_pdf  # ✅
+from ..deps import verify_api_key
 
 router = APIRouter(
     prefix="/api/v1/ai",
@@ -17,6 +18,7 @@ async def summarize_synchronous(
     file: UploadFile = File(...),
     llm_provider: LLMProvider = Query("cloud"),
     mode: CloudMode = Query("flash"),
+    _: bool = Depends(verify_api_key),
 ):
     try:
         pdf_bytes = await file.read()
@@ -51,7 +53,10 @@ class AsyncTaskRequest(BaseModel):
 
 
 @router.post("/summarize-async")
-async def summarize_asynchronous(task_request: AsyncTaskRequest):
+async def summarize_asynchronous(
+    task_request: AsyncTaskRequest,
+    _: bool = Depends(verify_api_key),
+):
     pdf_tasks.async_summarize_pdf.delay(
         pdf_id=task_request.pdf_id,
         storage_path=task_request.storage_path,
@@ -76,6 +81,7 @@ async def start_chat(
     file: UploadFile = File(...),
     llm_provider: LLMProvider = Query("cloud"),
     mode: CloudMode = Query("flash"),
+    _: bool = Depends(verify_api_key),
 ):
     pdf_bytes = await file.read()
     text = pdf_service.extract_text_from_pdf_bytes(pdf_bytes)
@@ -97,7 +103,10 @@ class ChatRequest(BaseModel):
 
 
 @router.post("/chat")
-async def chat_about_pdf(req: ChatRequest):
+async def chat_about_pdf(
+    req: ChatRequest,
+    _: bool = Depends(verify_api_key),
+):
     try:
         ai_service._cleanup_sessions()
         session = ai_service._PDF_CHAT_SESSIONS.get(req.session_id)
@@ -147,7 +156,10 @@ class TTSRequest(BaseModel):
 
 
 @router.post("/tts")
-async def generate_speech(request: TTSRequest):
+async def generate_speech(
+    request: TTSRequest,
+    _: bool = Depends(verify_api_key),
+):
     if not request.text:
         raise HTTPException(status_code=400, detail="Metin boş olamaz.")
 
