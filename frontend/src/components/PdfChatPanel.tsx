@@ -3,8 +3,13 @@
 import { useState, useEffect, useRef } from "react";
 import { sendRequest } from "@/utils/api";
 import { useLanguage } from "@/context/LanguageContext";
-import ReactMarkdown from "react-markdown"; // ✅ Eklendi
-import remarkGfm from "remark-gfm"; // ✅ Eklendi (Tablo desteği için)
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import { motion, AnimatePresence } from "framer-motion";
+import { useSession } from "next-auth/react";
+import Image from "next/image";
+
+import NeuroLogoIcon from "@/assets/icons/NeuroPDF-Chat.svg";
 
 type Message = {
   role: "user" | "assistant";
@@ -18,13 +23,14 @@ type Props = {
 };
 
 export default function PdfChatPanel({ file, isOpen, onClose }: Props) {
-  const { t } = useLanguage();
+  const { data: session } = useSession();
+  const { t } = useLanguage(); // ✅ Dil desteği aktif
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [initializing, setInitializing] = useState(false);
-  
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = () => {
@@ -33,7 +39,7 @@ export default function PdfChatPanel({ file, isOpen, onClose }: Props) {
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages]);
+  }, [messages, loading]);
 
   useEffect(() => {
     if (isOpen && file && !sessionId && !initializing) {
@@ -41,22 +47,25 @@ export default function PdfChatPanel({ file, isOpen, onClose }: Props) {
     }
   }, [isOpen, file]);
 
+  const getInitials = (name: string) => {
+    if (!name) return "U";
+    return name.split(' ').map((n) => n[0]).slice(0, 2).join('').toUpperCase();
+  };
+
   const initChatSession = async () => {
     setInitializing(true);
     try {
       const formData = new FormData();
       formData.append("file", file);
-      
       const chatRes = await sendRequest("/files/chat/start", "POST", formData, true);
-      
       if (!chatRes.session_id) throw new Error("Oturum açılamadı.");
-
       setSessionId(chatRes.session_id);
-      setMessages([{ role: "assistant", content: `Merhaba! **"${file.name}"** belgesi hafızama yüklendi. Sorularınızı bekliyorum.` }]);
-
+      setMessages([{ 
+        role: "assistant", 
+        content: t('chatWelcome') || `👋 Merhaba! **"${file.name}"** dosyasını analiz ettim. Bana bu belgeyle ilgili her şeyi sorabilirsin.` 
+      }]);
     } catch (e) {
-      console.error(e);
-      setMessages([{ role: "assistant", content: "Sohbet başlatılamadı. Lütfen tekrar deneyin." }]);
+      setMessages([{ role: "assistant", content: t('chatInitError') || "🚫 Sohbet başlatılamadı." }]);
     } finally {
       setInitializing(false);
     }
@@ -64,129 +73,134 @@ export default function PdfChatPanel({ file, isOpen, onClose }: Props) {
 
   const handleSend = async () => {
     if (!input.trim() || !sessionId) return;
-
     const userMsg = input.trim();
     setInput("");
     setMessages((prev) => [...prev, { role: "user", content: userMsg }]);
     setLoading(true);
-
     try {
       const res = await sendRequest("/files/chat/message", "POST", {
         session_id: sessionId,
         message: userMsg,
       });
-
       setMessages((prev) => [...prev, { role: "assistant", content: res.answer }]);
     } catch (e) {
-      setMessages((prev) => [...prev, { role: "assistant", content: "⚠️ Bir hata oluştu." }]);
+      setMessages((prev) => [...prev, { role: "assistant", content: t('chatConnError') || "⚠️ Bağlantı hatası." }]);
     } finally {
       setLoading(false);
     }
   };
 
-  if (!isOpen) return null;
-
   return (
-    <div 
-      className="fixed top-[64px] right-0 h-[calc(100vh-64px)] w-full sm:w-[450px] bg-[var(--background)] border-l border-[var(--navbar-border)] shadow-2xl z-50 flex flex-col animate-in slide-in-from-right duration-300"
-    >
-      {/* HEADER */}
-      <div className="flex items-center justify-between p-4 border-b border-[var(--navbar-border)] bg-[var(--container-bg)]">
-        <div className="flex items-center gap-2">
-          <div className="p-2 rounded-lg bg-indigo-100 text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-400">
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M8.625 12a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H8.25m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H12m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 01-2.555-.337A5.972 5.972 0 015.41 20.97a5.969 5.969 0 01-.474-.065 4.48 4.48 0 00.978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.159 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25z" />
-            </svg>
-          </div>
-          <h3 className="font-bold text-lg">AI Sohbet</h3>
-        </div>
-        <button onClick={onClose} className="p-2 hover:bg-gray-200 dark:hover:bg-gray-800 rounded-lg transition">
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        </button>
-      </div>
-
-      {/* MESAJ ALANI */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-[var(--background)]">
-        {initializing && (
-          <div className="flex justify-center py-10">
-            <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-indigo-500"></div>
-          </div>
-        )}
-        
-        {messages.map((msg, idx) => (
-          <div key={idx} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
-            <div 
-              className={`max-w-[95%] p-3 rounded-2xl text-sm leading-relaxed overflow-hidden ${
-                msg.role === "user" 
-                  ? "bg-indigo-600 text-white rounded-br-none" 
-                  : "bg-[var(--container-bg)] border border-[var(--navbar-border)] rounded-bl-none text-[var(--foreground)]"
-              }`}
-            >
-              {/* ✅ BURASI DEĞİŞTİ: Düz metin yerine Markdown Render Ediliyor */}
-              {msg.role === "user" ? (
-                msg.content
-              ) : (
-                <ReactMarkdown 
-                  remarkPlugins={[remarkGfm]}
-                  components={{
-                    // Tabloları şık göstermek için özel CSS sınıfları
-                    table: ({node, ...props}) => <div className="overflow-x-auto my-2 rounded-lg border border-[var(--navbar-border)]"><table className="w-full text-left text-sm" {...props} /></div>,
-                    thead: ({node, ...props}) => <thead className="bg-gray-100 dark:bg-gray-800/50 uppercase text-xs font-semibold" {...props} />,
-                    tbody: ({node, ...props}) => <tbody className="divide-y divide-[var(--navbar-border)]" {...props} />,
-                    tr: ({node, ...props}) => <tr className="hover:bg-gray-50 dark:hover:bg-white/5 transition-colors" {...props} />,
-                    th: ({node, ...props}) => <th className="px-3 py-2" {...props} />,
-                    td: ({node, ...props}) => <td className="px-3 py-2" {...props} />,
-                    p: ({node, ...props}) => <p className="mb-2 last:mb-0" {...props} />,
-                    ul: ({node, ...props}) => <ul className="list-disc list-inside mb-2" {...props} />,
-                    ol: ({node, ...props}) => <ol className="list-decimal list-inside mb-2" {...props} />,
-                    strong: ({node, ...props}) => <strong className="font-bold text-indigo-600 dark:text-indigo-400" {...props} />,
-                  }}
-                >
-                  {msg.content}
-                </ReactMarkdown>
-              )}
-            </div>
-          </div>
-        ))}
-        
-        {loading && (
-           <div className="flex justify-start">
-             <div className="bg-[var(--container-bg)] p-3 rounded-2xl rounded-bl-none border border-[var(--navbar-border)] text-sm opacity-70 flex gap-2 items-center">
-               <span className="w-2 h-2 bg-indigo-500 rounded-full animate-bounce"></span>
-               <span className="w-2 h-2 bg-indigo-500 rounded-full animate-bounce delay-100"></span>
-               <span className="w-2 h-2 bg-indigo-500 rounded-full animate-bounce delay-200"></span>
-             </div>
-           </div>
-        )}
-        <div ref={messagesEndRef} />
-      </div>
-
-      {/* INPUT ALANI */}
-      <div className="p-4 border-t border-[var(--navbar-border)] bg-[var(--container-bg)]">
-        <form 
-          onSubmit={(e) => { e.preventDefault(); handleSend(); }}
-          className="flex gap-2"
-        >
-          <input
-            type="text"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder="Tablo, özet veya bilgi sorun..."
-            className="flex-1 bg-[var(--background)] border border-[var(--navbar-border)] rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-[var(--foreground)]"
+    <AnimatePresence>
+      {isOpen && (
+        <>
+          {/* Backdrop (Mobil için) */}
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={onClose}
+            className="fixed inset-0 bg-black/20 backdrop-blur-sm z-30 sm:hidden"
           />
-          <button 
-            type="submit" 
-            disabled={!sessionId || loading || initializing}
-            className="bg-indigo-600 hover:bg-indigo-700 text-white p-3 rounded-xl transition disabled:opacity-50 flex items-center justify-center"
+
+          <motion.div
+            initial={{ x: "100%", opacity: 0.5 }}
+            animate={{ x: 0, opacity: 1 }}
+            exit={{ x: "100%", opacity: 0.5 }}
+            transition={{ type: "spring", stiffness: 260, damping: 25 }}
+            // ✅ Z-Index 40 yapıldı (Navbar'ın altında kalsın diye)
+            // ✅ rounded-l-[2rem] eklendi (Sivri oval köşeler)
+            className="fixed top-[64px] right-2 bottom-2 w-full sm:w-[480px] z-40 flex flex-col shadow-[-20px_0_50px_rgba(0,0,0,0.1)] overflow-hidden rounded-l-[2rem] rounded-r-lg"
+            style={{ 
+                backgroundColor: "var(--background)", 
+                border: "1px solid var(--container-border)" 
+            }}
           >
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" />
-            </svg>
-          </button>
-        </form>
-      </div>
-    </div>
+            <div className="chat-border-glow" />
+
+            {/* --- HEADER --- */}
+            <div 
+                className="flex items-center justify-between px-8 py-5 border-b relative z-10"
+                style={{ backgroundColor: "var(--navbar-bg)", borderColor: "var(--navbar-border)" }}
+            >
+              <div className="flex items-center gap-3">
+                <div className="relative">
+                  <div className="w-10 h-10 rounded-full flex items-center justify-center bg-white border border-gray-100 shadow-sm overflow-hidden">
+                    <Image src={NeuroLogoIcon} alt="AI Logo" width={28} height={28} />
+                  </div>
+                  <span className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 rounded-full" style={{ borderColor: "var(--navbar-bg)" }}></span>
+                </div>
+                <div>
+                  <h3 className="font-bold leading-tight" style={{ color: "var(--foreground)" }}>Neuro Chat</h3>
+                  <p className="text-xs opacity-60 truncate max-w-[180px]">{file.name}</p>
+                </div>
+              </div>
+              <button onClick={onClose} className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+              </button>
+            </div>
+
+            {/* --- MESAJ ALANI --- */}
+            <div className="chat-messages-area relative flex-1 overflow-y-auto p-6 scrollbar-thin">
+              <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-[0.03] dark:opacity-[0.05]">
+                <Image src={NeuroLogoIcon} alt="Watermark" width={250} height={250} />
+              </div>
+
+              <div className="space-y-6 relative z-10">
+                {initializing && (
+                  <div className="flex flex-col items-center justify-center h-full py-20 opacity-50">
+                    <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: "linear" }} className="w-8 h-8 border-2 border-[var(--button-bg)] border-t-transparent rounded-full" />
+                    <p className="text-sm mt-4">{t('analyzing') || "Belge analiz ediliyor..."}</p>
+                  </div>
+                )}
+
+                <AnimatePresence mode="popLayout">
+                  {messages.map((msg, idx) => (
+                    <motion.div key={idx} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+                      <div className={`flex max-w-[90%] gap-3 ${msg.role === "user" ? "flex-row-reverse" : "flex-row"}`}>
+                        <div className="w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center bg-white border border-gray-100 shadow-sm overflow-hidden text-[10px] font-bold">
+                          {msg.role === "user" ? (
+                            session?.user?.image ? <img src={session.user.image} className="w-full h-full object-cover" alt="U" /> : <span className="text-gray-600">{getInitials(session?.user?.name || "U")}</span>
+                          ) : (
+                            <Image src={NeuroLogoIcon} alt="AI" width={18} height={18} />
+                          )}
+                        </div>
+                        <div className={`chat-bubble ${msg.role === "user" ? "chat-bubble-user" : "chat-bubble-ai"}`}>
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+                        </div>
+                      </div>
+                    </motion.div>
+                  ))}
+                </AnimatePresence>
+                {loading && <div className="text-xs opacity-50 animate-pulse">{t('aiTyping') || "Neuro yanıt yazıyor..."}</div>}
+              </div>
+              <div ref={messagesEndRef} />
+            </div>
+
+            {/* --- INPUT ALANI (Alt kısım düzenlendi) --- */}
+            <div className="p-4 relative z-10" style={{ backgroundColor: "var(--navbar-bg)", borderTop: "1px solid var(--navbar-border)" }}>
+              <form onSubmit={(e) => { e.preventDefault(); handleSend(); }} className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  placeholder={t('chatPlaceholder') || "Sorunuzu yazın..."}
+                  disabled={loading || initializing}
+                  className="chat-input-field flex-1"
+                />
+                <motion.button whileTap={{ scale: 0.9 }} type="submit" disabled={!input.trim() || loading || initializing} className="btn-primary p-3 rounded-xl">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="m5 12 7-7 7 7"/><path d="M12 19V5"/></svg>
+                </motion.button>
+              </form>
+              
+              {/* ✅ Madde 1: Yazı artık butonun tam altında */}
+              <p className="text-[10px] text-center mt-3 opacity-40 leading-tight">
+                {t('chatDisclaimer') || "NeuroPDF yapay zekası bazen hata yapabilir. Lütfen bilgileri kontrol edin."}
+              </p>
+            </div>
+          </motion.div>
+        </>
+      )}
+    </AnimatePresence>
   );
 }

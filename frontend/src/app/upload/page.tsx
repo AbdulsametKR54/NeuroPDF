@@ -16,83 +16,122 @@ const PdfViewer = dynamic(() => import("@/components/PdfViewer"), { ssr: false }
 export default function UploadPage() {
   const { data: session, status } = useSession();
   const { pdfFile, savePdf } = usePdf(); 
+  
+  // ✅ Dil değiştiğinde sayfanın yeniden render olmasını sağlamak için t() fonksiyonunu alıyoruz
   const { t } = useLanguage();
 
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  
+  // ✅ DEĞİŞİKLİK 1: Hata mesajını değil, hata KODUNU saklıyoruz.
+  const [errorKey, setErrorKey] = useState<string | null>(null);
+  // Eğer hata çevrilebilir bir anahtar değilse (örn: kütüphaneden gelen özel bir mesaj), bunu kullanırız.
+  const [customError, setCustomError] = useState<string | null>(null);
 
-  // ✅ Limit Hesaplama
   const isGuest = status !== "authenticated";
   const maxBytes = getMaxUploadBytes(isGuest);
 
-  const { usageInfo, showLimitModal, checkLimit, closeLimitModal, redirectToLogin } = useGuestLimit();
+  const { usageInfo, showLimitModal, closeLimitModal, redirectToLogin } = useGuestLimit();
+
+  // Helper: Hataları temizle
+  const clearError = () => {
+    setErrorKey(null);
+    setCustomError(null);
+  };
 
   // --- Dosya İşlemleri ---
 
   // 1. Bilgisayardan Sürükle-Bırak
-  const onDrop = useCallback((acceptedFiles: File[]) => {
+  const onDrop = useCallback((acceptedFiles: File[], fileRejections: any[]) => {
+    clearError();
+
+    // Reddedilen dosya kontrolü
+    if (fileRejections.length > 0) {
+      const rejection = fileRejections[0];
+      const errorObj = rejection.errors[0];
+
+      if (errorObj.code === "file-invalid-type") {
+        setErrorKey("invalidFileType"); // ✅ Anahtar kaydedildi
+      } else if (errorObj.code === "file-too-large") {
+        setErrorKey("fileSizeExceeded"); // ✅ Anahtar kaydedildi
+      } else {
+        setCustomError(errorObj.message); // Bilinmeyen hata ise metni kaydet
+      }
+      setFile(null);
+      return;
+    }
+
     if (acceptedFiles?.length) {
       const f = acceptedFiles[0];
       
-      // Limit kontrolü
+      // Çift Kontrol (Güvenlik İçin)
+      if (f.type !== "application/pdf") {
+        setFile(null);
+        setErrorKey("invalidFileType"); // ✅
+        return;
+      }
+
       if (f.size > maxBytes) {
         setFile(null);
-        setError(`${t('fileSizeExceeded') || 'Dosya boyutu sınırı aşıldı'} (Max: ${(maxBytes / (1024 * 1024)).toFixed(0)} MB)`);
+        setErrorKey("fileSizeExceeded"); // ✅
         return;
       }
 
       setFile(f);
-      setError(null);
     }
-  }, [maxBytes, t]);
+  }, [maxBytes]); // t() bağımlılığına gerek yok çünkü burada çeviri yapmıyoruz
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
     multiple: false,
     accept: { "application/pdf": [".pdf"] },
-    maxSize: maxBytes, // ✅ Limit bildirildi
-    onDropRejected: (fileRejections) => {
-        const rejection = fileRejections[0];
-        if (rejection.errors[0].code === "file-too-large") {
-            setError(`${t('fileSizeExceeded') || 'Dosya boyutu sınırı aşıldı'} (Max: ${(maxBytes / (1024 * 1024)).toFixed(0)} MB)`);
-        } else {
-            setError(rejection.errors[0].message);
-        }
-        setFile(null);
-    },
+    maxSize: maxBytes, 
   });
 
   // 2. Sağ Panelden Sürükle-Bırak (Varsa)
   const handleDropFromPanel = (e?: React.DragEvent<HTMLDivElement> | React.MouseEvent<HTMLButtonElement>) => {
+    clearError();
     if (pdfFile) {
+        if (pdfFile.type !== "application/pdf") {
+            setFile(null);
+            setErrorKey("invalidFileType");
+            return;
+        }
+
         if (pdfFile.size > maxBytes) {
             setFile(null);
-            setError(`${t('fileSizeExceeded') || 'Dosya boyutu sınırı aşıldı'} (Max: ${(maxBytes / (1024 * 1024)).toFixed(0)} MB)`);
+            setErrorKey("fileSizeExceeded");
             return;
         }
         setFile(pdfFile);
-        setError(null);
+        
         if (e && 'stopPropagation' in e) {
             e.stopPropagation(); 
             e.preventDefault();
         }
     } else {
-        setError(t('panelPdfError') || "Panelde PDF bulunamadı.");
+        setCustomError(t('panelPdfError') || "Panelde PDF bulunamadı.");
     }
   };
 
   const handleSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    clearError();
     const f = e.target.files?.[0];
     if (f) {
+      if (f.type !== "application/pdf" && !f.name.toLowerCase().endsWith(".pdf")) {
+        setFile(null);
+        setErrorKey("invalidFileType");
+        e.target.value = ''; // Input'u temizle
+        return;
+      }
+
       if (f.size > maxBytes) {
         setFile(null);
-        setError(`${t('fileSizeExceeded') || 'Dosya boyutu sınırı aşıldı'} (Max: ${(maxBytes / (1024 * 1024)).toFixed(0)} MB)`);
+        setErrorKey("fileSizeExceeded");
         e.target.value = '';
         return;
       }
       setFile(f);
-      setError(null);
     }
     e.target.value = '';
   };
@@ -100,27 +139,41 @@ export default function UploadPage() {
   // --- SADECE PANELE EKLE (Backend Yok) ---
   const handleAddToPanel = () => {
     if (!file) {
-        setError(t('selectFile'));
+        setCustomError(t('selectFile'));
         return;
     }
 
-    setUploading(true); // Yalandan bir loading gösterelim (Hemen bitse bile)
+    setUploading(true); 
     
     try {
-        // Dosyayı Context'e (Sağ Panele) gönder
         savePdf(file);
-        
-        // Kullanıcıya bilgi ver (Toast veya Alert)
-        // alert(t('pdfAddedToPanel') || "Dosya sağ panele eklendi! Şimdi araçları kullanabilirsiniz."); 
-        // Not: Alert yerine toast daha iyi olur ama şimdilik böyle kalsın.
-
     } catch (err: any) {
         console.error("Panel Error:", err);
-        setError("Dosya panele eklenirken bir hata oluştu.");
+        setCustomError("Dosya panele eklenirken bir hata oluştu.");
     } finally {
         setUploading(false);
     }
   };
+
+  // ✅ DEĞİŞİKLİK 2: Hata mesajını Render anında hesaplayan fonksiyon
+  const getErrorMessage = () => {
+    // Özel (çevrilemez) bir hata varsa onu göster
+    if (customError) return customError;
+    
+    // Kayıtlı bir hata anahtarı varsa, o anki dile göre çevir
+    if (errorKey === "fileSizeExceeded") {
+        const limitMB = (maxBytes / (1024 * 1024)).toFixed(0);
+        return `${t("fileSizeExceeded")} (Max: ${limitMB} MB)`;
+    }
+    
+    if (errorKey === "invalidFileType") {
+        return t("invalidFileType");
+    }
+
+    return null;
+  };
+
+  const errorMessage = getErrorMessage();
 
   return (
     <main className="min-h-screen p-6 max-w-4xl mx-auto font-bold text-[var(--foreground)]">
@@ -135,20 +188,18 @@ export default function UploadPage() {
       {/* Dropzone Alanı */}
       <div
         {...getRootProps()}
-        onDrop={handleDropFromPanel}
         className={`container-card border-2 border-dashed rounded-2xl p-10 text-center cursor-pointer transition-all duration-300
           ${isDragActive
             ? "border-[var(--button-bg)] bg-[var(--background)] opacity-80"
             : "border-[var(--navbar-border)] hover:border-[var(--button-bg)]"
           }`}
       >
-        <input {...getInputProps()} />
+        <input {...getInputProps()} accept="application/pdf" /> 
         <div className="flex flex-col items-center gap-3">
-            {/* SVG İkonu */}
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-12 h-12 opacity-50">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-12 h-12 opacity-50">
             <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
-          </svg>
-          {isDragActive ? <p>{t('dropActive')}</p> : <p>{t('dropPassive')}</p>}
+            </svg>
+            {isDragActive ? <p>{t('dropActive')}</p> : <p>{t('dropPassive')}</p>}
         </div>
         
         {file && !isDragActive && (
@@ -212,7 +263,7 @@ export default function UploadPage() {
         </div>
       )}
 
-      {error && (
+      {errorMessage && (
         <div className="error-box mb-6 shadow-sm">
           <svg
             xmlns="http://www.w3.org/2000/svg"
@@ -227,7 +278,8 @@ export default function UploadPage() {
             />
           </svg>
 
-          <span>{error}</span>
+          {/* Hata Mesajı */}
+          <span>{errorMessage}</span>
         </div>
       )}
 

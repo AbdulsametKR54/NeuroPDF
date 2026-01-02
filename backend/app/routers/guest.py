@@ -1,11 +1,13 @@
+# app/routers/guest.py
 from fastapi import APIRouter, HTTPException, Header
 from pydantic import BaseModel
 from typing import Optional
 import uuid
-from supabase import Client
-from ..db import get_supabase
+import logging
 from ..redis_client import redis_client
 from ..config import settings
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/guest", tags=["guest"])
 
@@ -39,7 +41,7 @@ def get_guest_usage_count(guest_id: str) -> int:
         count = redis_client.get(redis_key)
         return int(count) if count else 0
     except Exception as e:
-        print(f"Redis get error: {e}")
+        logger.error(f"Redis get error: {e}", exc_info=True)
         return 0
 
 def increment_guest_usage(guest_id: str) -> int:
@@ -54,7 +56,7 @@ def increment_guest_usage(guest_id: str) -> int:
         redis_client.expire(redis_key, 86400)  # 24 hours
         return count
     except Exception as e:
-        print(f"Redis incr error: {e}")
+        logger.error(f"Redis incr error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Could not track usage")
 
 # ==========================================
@@ -78,7 +80,7 @@ def create_guest_session():
         redis_key = f"guest:usage:{guest_id}"
         redis_client.set(redis_key, 0, ex=86400)  # 24 saat expire
     except Exception as e:
-        print(f"Could not initialize guest session in Redis: {e}")
+        logger.error(f"Could not initialize guest session in Redis: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Could not create session")
     
     return GuestSessionOut(
@@ -177,6 +179,6 @@ def delete_guest_session(
             redis_key = f"guest:usage:{x_guest_id}"
             redis_client.delete(redis_key)
         except Exception as e:
-            print(f"Could not delete guest session: {e}")
+            logger.error(f"Could not delete guest session: {e}", exc_info=True)
     
     return {"message": "Session deleted"}

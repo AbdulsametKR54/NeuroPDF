@@ -1,3 +1,4 @@
+# app/routers/files.py
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends, Header, Body
 from fastapi.responses import StreamingResponse
 from typing import Dict, List, Optional
@@ -8,14 +9,20 @@ import html
 import io
 import re
 import os
+import jwt # ✅ EKLENDİ: Token çözümleme için gerekli
 from datetime import datetime, timezone
+from sqlalchemy.orm import Session
 
 # --- Config & DB ---
 from ..config import settings
-from ..db import get_supabase, Client
-from ..storage import storage_service
-from ..routers.auth import get_current_user
-from ..models import UserStatsResponse
+from ..db import get_supabase, Client, get_db
+from ..storage import save_pdf_to_db, get_pdf_from_db, delete_pdf_from_db, list_user_pdfs
+# ✅ DÜZELTİLDİ: auth.py'den import edildi ve eski fonksiyon kaldırıldı
+from ..deps import get_current_user 
+from ..models import UserStatsResponse, User
+import logging
+
+logger = logging.getLogger(__name__)
 
 # --- ReportLab Importları (PDF Oluşturma İçin) ---
 from reportlab.pdfgen import canvas
@@ -51,18 +58,18 @@ try:
     if os.path.exists(regular_font_path):
         pdfmetrics.registerFont(TTFont('SourceSansPro-Regular', regular_font_path))
         FONT_NAME_REGULAR = 'SourceSansPro-Regular'
-        print(f"✅ Normal Font Yüklendi: {regular_font_path}")
+        logger.info(f"Normal Font Yüklendi: {regular_font_path}")
     
     if os.path.exists(bold_font_path):
         pdfmetrics.registerFont(TTFont('SourceSansPro-Bold', bold_font_path))
         FONT_NAME_BOLD = 'SourceSansPro-Bold'
-        print(f"✅ Kalın Font Yüklendi: {bold_font_path}")
+        logger.info(f"Kalın Font Yüklendi: {bold_font_path}")
     else:
         if FONT_NAME_REGULAR != "Helvetica":
             FONT_NAME_BOLD = FONT_NAME_REGULAR
 
 except Exception as e:
-    print(f"❌ Font yükleme hatası: {e}")
+    logger.warning(f"Font yükleme hatası: {e}", exc_info=True)
 
 
 # ==========================================
@@ -85,6 +92,74 @@ async def validate_file_size(file: UploadFile, is_guest: bool):
             detail=f"{user_type} limiti aşıldı! Maksimum {limit_mb} MB dosya yükleyebilirsiniz."
         )
 
+
+def get_ai_service_headers() -> dict:
+    """AI Service'e yapılan istekler için header'ları hazırlar (API key dahil)."""
+    headers = {}
+    if settings.AI_SERVICE_API_KEY:
+        headers["X-API-Key"] = settings.AI_SERVICE_API_KEY
+    return headers
+
+
+def get_user_llm_provider(db: Session, user_id: str) -> str:
+    """
+    Kullanıcının DB'deki LLM tercihine göre provider string'i döndürür.
+    llm_choice_id: 0 = "local", 1 = "cloud"
+    Eğer kullanıcı bulunamazsa default "local" döner.
+    """
+    try:
+        user = db.query(User).filter(User.id == user_id).first()
+        if user:
+            # llm_choice_id: 0 = local llm, 1 = cloud llm
+            return "local" if getattr(user, 'llm_choice_id', 0) == 0 else "cloud"
+        return "local" 
+    except Exception as e:
+        logger.warning(f"Failed to get user LLM choice for {user_id}: {e}")
+        return "local"
+    
+# ==========================================
+# USER SETTINGS (LLM CHOICE) - EKSİK OLAN KISIM
+# ==========================================
+
+class UpdateLlmChoiceRequest(BaseModel):
+    provider: str  # "local" veya "cloud"
+
+@router.post("/user/update-llm")
+async def update_llm_choice(
+    req: UpdateLlmChoiceRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Kullanıcının varsayılan LLM tercihini günceller.
+    provider: 'local' -> 0
+    provider: 'cloud' -> 1
+    """
+    try:
+        user_id = current_user.get("sub")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="User ID not found")
+
+        # Provider string'ini ID'ye çevir (DB şemanıza göre: 0=Local, 1=Cloud)
+        choice_id = 1 if req.provider == "cloud" else 0
+        
+        # Kullanıcıyı bul ve güncelle
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+            
+        user.llm_choice_id = choice_id
+        db.commit()
+        
+        return {"status": "success", "provider": req.provider, "choice_id": choice_id}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"LLM update error: {e}", exc_info=True)
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Tercih güncellenemedi")
+
 # --- GÜNCELLENMİŞ VE LOGLAYAN HELPER FONKSİYONU ---
 
 async def increment_user_usage(user_id: str, supabase: Client, operation_type: str):
@@ -92,14 +167,11 @@ async def increment_user_usage(user_id: str, supabase: Client, operation_type: s
     Kullanıcının işlem istatistiğini artırır.
     UPSERT yerine açık UPDATE/INSERT mantığı kullanır.
     """
-    print(f"\n📈 [ISTATISTIK GÜNCELLEME] ------------------------------------------------")
-    print(f"👤 User ID    : {user_id}")
-    print(f"🛠️ İşlem Tipi : {operation_type}")
+    logger.debug(f"ISTATISTIK GÜNCELLEME - User ID: {user_id}, İşlem Tipi: {operation_type}")
 
     # Misafir kontrolü
     if not user_id or str(user_id).startswith("guest"):
-        print("🚫 Misafir kullanıcı, istatistik tutulmuyor.")
-        print("--------------------------------------------------------------------------\n")
+        logger.debug("Misafir kullanıcı, istatistik tutulmuyor.")
         return
     
     target_column = "summary_count" if operation_type == "summary" else "tools_count"
@@ -107,7 +179,6 @@ async def increment_user_usage(user_id: str, supabase: Client, operation_type: s
 
     try:
         # 1. ADIM: Kullanıcının istatistik kaydı var mı?
-        print("🔍 Mevcut veri aranıyor...")
         res = supabase.table("user_stats").select("*").eq("user_id", user_id).execute()
         
         # Kayıt bulunduysa -> GÜNCELLE (UPDATE)
@@ -116,7 +187,7 @@ async def increment_user_usage(user_id: str, supabase: Client, operation_type: s
             current_val = current_data.get(target_column, 0)
             new_val = current_val + 1
             
-            print(f"🔹 Mevcut Değer: {current_val} -> Yeni Değer: {new_val}")
+            logger.debug(f"User stats update - {target_column}: {current_val} -> {new_val}")
             
             update_data = {
                 target_column: new_val,
@@ -125,11 +196,11 @@ async def increment_user_usage(user_id: str, supabase: Client, operation_type: s
             
             # Sadece ilgili satırı güncelle
             supabase.table("user_stats").update(update_data).eq("user_id", user_id).execute()
-            print(f"✅ [GÜNCELLENDİ] Başarıyla artırıldı.")
+            logger.debug(f"User stats updated successfully for user: {user_id}")
 
         # Kayıt yoksa -> OLUŞTUR (INSERT)
         else:
-            print("🔹 Kayıt bulunamadı. Yeni kayıt oluşturuluyor...")
+            logger.debug(f"Creating new user stats record for user: {user_id}")
             new_data = {
                 "user_id": user_id,
                 "summary_count": 1 if target_column == "summary_count" else 0,
@@ -137,13 +208,10 @@ async def increment_user_usage(user_id: str, supabase: Client, operation_type: s
                 "last_activity": now_iso
             }
             supabase.table("user_stats").insert(new_data).execute()
-            print("✅ [OLUŞTURULDU] İlk istatistik kaydı eklendi.")
+            logger.debug(f"New user stats record created for user: {user_id}")
 
     except Exception as e:
-        print(f"❌ [KRİTİK HATA]: İstatistik güncellenemedi -> {e}")
-        # Hatanın ne olduğunu görmek için exception'ı yazdırıyoruz ama akışı kırmıyoruz.
-    
-    print("--------------------------------------------------------------------------\n")
+        logger.error(f"İstatistik güncellenemedi: {e}", exc_info=True)
 
 def parse_page_ranges(range_str: str, max_pages: int) -> list[int]:
     """Sayfa aralığı stringini parse eder."""
@@ -175,7 +243,8 @@ def parse_page_ranges(range_str: str, max_pages: int) -> list[int]:
 async def summarize_file(
     file: UploadFile = File(...),
     authorization: Optional[str] = Header(None),
-    supabase: Client = Depends(get_supabase)
+    supabase: Client = Depends(get_supabase),
+    db: Session = Depends(get_db)
 ):
     """Frontend'deki 'handleSummarize' fonksiyonunun çağırdığı SENKRON endpoint."""
     print("\n--- SUMMARIZE İSTEĞİ ---")
@@ -183,15 +252,18 @@ async def summarize_file(
     if file.content_type != "application/pdf":
         raise HTTPException(status_code=400, detail="Sadece PDF dosyaları kabul edilir.")
 
-    # USER ID ÇÖZÜMLEME
+    # USER ID ÇÖZÜMLEME (Manuel Decode - get_current_user_from_header YERİNE)
     user_id = None
     if authorization:
         try:
-            user_data = get_current_user(authorization)
-            user_id = user_data.get("sub")
+            # "Bearer " kısmını temizle
+            token = authorization.split("Bearer ")[1] if "Bearer " in authorization else authorization
+            # Token'ı decode et
+            payload = jwt.decode(token, settings.JWT_SECRET, algorithms=["HS256"])
+            user_id = payload.get("sub")
             print(f"✅ Token Çözüldü. User ID: {user_id}")
         except Exception as e:
-            print(f"⚠️ Token Hatası: {str(e)}")
+            print(f"⚠️ Token Hatası (Misafir sayılacak): {str(e)}")
             pass
     else:
         print("👤 Misafir Kullanıcı")
@@ -204,10 +276,18 @@ async def summarize_file(
         file_content = await file.read()
         files = {"file": ("upload.pdf", file_content, "application/pdf")}
         ai_service_url = f"{settings.AI_SERVICE_URL}/api/v1/ai/summarize-sync"
+        
+        # Kullanıcının LLM tercihini DB'den al
+        llm_provider = "local"  # Misafir için default
+        if user_id:
+            llm_provider = get_user_llm_provider(db, user_id)
+            print(f"📊 Kullanıcı LLM Tercihi: {llm_provider}")
 
-        print(f"📡 AI Service İstek: {ai_service_url}")
+        print(f"📡 AI Service İstek: {ai_service_url} (llm_provider: {llm_provider})")
         async with httpx.AsyncClient(timeout=120.0, follow_redirects=True) as client:
-            response = await client.post(ai_service_url, files=files)
+            headers = get_ai_service_headers()
+            params = {"llm_provider": llm_provider}
+            response = await client.post(ai_service_url, files=files, params=params, headers=headers)
             
             if response.status_code != 200:
                 print(f"❌ AI Service Error: {response.text}")
@@ -253,9 +333,14 @@ async def summarize_for_guest(
         ai_service_url = f"{settings.AI_SERVICE_URL}/api/v1/ai/summarize-sync"
         file_content = await file.read()
         
+        # Misafir kullanıcılar için default: local (KVKK için güvenli)
+        llm_provider = "local"
+        
         async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
             files = {"file": (file.filename, file_content, "application/pdf")}
-            response = await client.post(ai_service_url, files=files)
+            headers = get_ai_service_headers()
+            params = {"llm_provider": llm_provider}
+            response = await client.post(ai_service_url, files=files, params=params, headers=headers)
             response.raise_for_status()
         
         result = response.json()
@@ -268,15 +353,16 @@ async def summarize_for_guest(
         }
     
     except Exception as e:
-        print(f"❌ Özetleme hatası: {e}")
-        raise HTTPException(status_code=500, detail=f"Özetleme başarısız: {str(e)}")
+        logger.error(f"Özetleme hatası: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Sunucu hatası")
 
 
 @router.post("/summarize-start/{file_id}")
 async def trigger_summarize_task(
     file_id: int, 
     current_user: dict = Depends(get_current_user),
-    supabase: Client = Depends(get_supabase)
+    supabase: Client = Depends(get_supabase),
+    db: Session = Depends(get_db)
 ):
     """Asenkron özetleme görevi başlatır."""
     print("\n--- SUMMARIZE-START İSTEĞİ ---")
@@ -292,19 +378,24 @@ async def trigger_summarize_task(
         if file_data["user_id"] != user_id:
             raise HTTPException(status_code=403, detail="Erişim yetkiniz yok")
         
+        # Kullanıcının LLM tercihini DB'den al
+        llm_provider = get_user_llm_provider(db, user_id)
+        
         supabase.table("documents").update({"status": "processing"}).eq("id", file_id).execute()
         
         callback_url = f"http://backend:8000/files/callback/{file_id}"
         task_data = {
             "pdf_id": file_id,
             "storage_path": file_data["storage_path"],
-            "callback_url": callback_url
+            "callback_url": callback_url,
+            "llm_provider": llm_provider
         }
 
         ai_service_url = f"{settings.AI_SERVICE_URL}/api/v1/ai/summarize-async"
         
         async with httpx.AsyncClient(follow_redirects=True) as client:
-            response = await client.post(ai_service_url, json=task_data, timeout=10)
+            headers = get_ai_service_headers()
+            response = await client.post(ai_service_url, json=task_data, headers=headers, timeout=10)
             response.raise_for_status()
         
         # İSTATİSTİK (Async olduğu için burada sayıyoruz)
@@ -382,7 +473,8 @@ async def get_file_summary(
 @router.post("/chat/start")  # 👈 {file_id} kaldırıldı
 async def start_chat_session(
     file: UploadFile = File(...), # 👈 Direkt dosyayı alıyoruz
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
 ):
     """
     Veritabanına kaydetmeden, dosyayı direkt AI Service'e gönderir.
@@ -397,15 +489,22 @@ async def start_chat_session(
     try:
         # 2. Dosyayı belleğe oku
         file_content = await file.read()
+        
+        # 3. Kullanıcının LLM tercihini DB'den al
+        user_id = current_user.get("sub")
+        llm_provider = get_user_llm_provider(db, user_id) if user_id else "local"
+        print(f"📊 Kullanıcı LLM Tercihi: {llm_provider}")
 
-        # 3. AI Service'e Gönder (/chat/start)
+        # 4. AI Service'e Gönder (/chat/start)
         async with httpx.AsyncClient() as client:
             # AI Service'e dosyayı multipart/form-data olarak iletiyoruz
             files = {"file": (file.filename, file_content, "application/pdf")}
             target_url = f"{settings.AI_SERVICE_URL}/api/v1/ai/chat/start"
             
-            print(f"📡 AI Service'e gönderiliyor: {target_url}")
-            response = await client.post(target_url, files=files, timeout=60.0)
+            print(f"📡 AI Service'e gönderiliyor: {target_url} (llm_provider: {llm_provider})")
+            headers = get_ai_service_headers()
+            params = {"llm_provider": llm_provider}
+            response = await client.post(target_url, files=files, params=params, headers=headers, timeout=60.0)
             
             if response.status_code != 200:
                 print(f"❌ AI Service Hatası: {response.text}")
@@ -446,8 +545,8 @@ async def send_chat_message(
         async with httpx.AsyncClient(timeout=60.0) as client:
             payload = {"session_id": session_id, "message": message}
             target_url = f"{settings.AI_SERVICE_URL}/api/v1/ai/chat"
-            
-            response = await client.post(target_url, json=payload)
+            headers = get_ai_service_headers()
+            response = await client.post(target_url, json=payload, headers=headers)
             
             if response.status_code != 200:
                 error_detail = response.json().get("detail", "AI hatası")
@@ -466,6 +565,10 @@ async def send_chat_message(
 # MARKDOWN TO PDF (GELİŞMİŞ FORMATLAMA - TABLO DESTEKLİ)
 # ==========================================
 
+# ==========================================
+# MARKDOWN TO PDF (Source Sans Pro Entegreli)
+# ==========================================
+
 class MarkdownToPdfRequest(BaseModel):
     markdown: str
 
@@ -473,35 +576,38 @@ class MarkdownToPdfRequest(BaseModel):
 async def markdown_to_pdf(request: MarkdownToPdfRequest):
     try:
         buffer = io.BytesIO()
-        # Kenar boşluklarını ayarlıyoruz
+        # Kenar boşlukları
         doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=40, leftMargin=40, topMargin=40, bottomMargin=40)
         styles = getSampleStyleSheet()
         
-        # --- Özel Stiller ---
+        # --- 1. Stil Tanımları ---
         
-        # Normal Metin Stili
+        # DÜZELTME: Buradaki manuel "Helvetica" atamaları kaldırıldı.
+        # Artık dosyanın en başındaki global FONT_NAME_REGULAR değişkenini kullanıyor.
+
+        # Normal Metin
         style_normal = ParagraphStyle(
             'TrNormal', 
             parent=styles['Normal'], 
-            fontName=FONT_NAME_REGULAR, 
+            fontName=FONT_NAME_REGULAR,  # <--- SourceSansPro buradan gelecek
             fontSize=10, 
             leading=14, 
             spaceAfter=6
         )
         
-        # Başlık Stili (H1 - #)
+        # Başlık 1 (#) - Koyu Lacivert
         style_heading_1 = ParagraphStyle(
             'TrHeading1', 
             parent=styles['Heading1'], 
-            fontName=FONT_NAME_BOLD, 
+            fontName=FONT_NAME_BOLD,     # <--- SourceSansPro-Bold
             fontSize=16, 
             leading=20, 
             spaceAfter=12, 
             spaceBefore=12,
-            textColor=colors.HexColor("#1a365d") # Koyu Lacivert
+            textColor=colors.HexColor("#1a365d") 
         )
 
-        # Alt Başlık Stili (H2 - ##)
+        # Başlık 2 (##) - Koyu Gri/Mavi
         style_heading_2 = ParagraphStyle(
             'TrHeading2', 
             parent=styles['Heading2'], 
@@ -513,7 +619,19 @@ async def markdown_to_pdf(request: MarkdownToPdfRequest):
             textColor=colors.HexColor("#2c3e50")
         )
 
-        # Liste Stili (Bullet)
+        # Başlık 3 (### ve sonrası) - Daha küçük gri başlık
+        style_heading_3 = ParagraphStyle(
+            'TrHeading3', 
+            parent=styles['Heading3'], 
+            fontName=FONT_NAME_BOLD, 
+            fontSize=11, 
+            leading=14, 
+            spaceAfter=8, 
+            spaceBefore=4,
+            textColor=colors.HexColor("#34495e")
+        )
+
+        # Liste Maddesi
         style_bullet = ParagraphStyle(
             'TrBullet', 
             parent=style_normal, 
@@ -522,20 +640,21 @@ async def markdown_to_pdf(request: MarkdownToPdfRequest):
             spaceAfter=4
         )
 
-        # Tablo Hücre Stili
+        # Tablo Hücresi
         style_cell = ParagraphStyle(
             'TableCell', 
             parent=style_normal, 
+            fontName=FONT_NAME_REGULAR, # Tablo içi
             fontSize=9, 
             leading=11,
             spaceAfter=0
         )
         
-        # Tablo Başlık Hücresi Stili
+        # Tablo Başlık Hücresi
         style_cell_header = ParagraphStyle(
             'TableCellHeader', 
             parent=style_normal, 
-            fontName=FONT_NAME_BOLD,
+            fontName=FONT_NAME_BOLD,    # Tablo başlığı
             fontSize=9, 
             leading=11,
             textColor=colors.white,
@@ -545,42 +664,43 @@ async def markdown_to_pdf(request: MarkdownToPdfRequest):
         story = []
         lines = request.markdown.split('\n')
         
-        # --- Helper: Markdown -> ReportLab XML Dönüştürücü ---
+        # --- 2. Yardımcı Fonksiyon: Inline Markdown ---
         def format_inline_markdown(text):
             if not text: return ""
             # HTML karakterlerini bozmamak için escape et
             text = html.escape(text)
+            
             # Bold: **text** -> <b>text</b>
+            # Not: registerFontFamily yapılmazsa <b> tagi Helvetica'ya düşebilir. 
+            # Ancak yukarıda registerFontFamily eklediysek veya fontlar doğruysa çalışır.
             text = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', text)
+            
             # Italic: *text* -> <i>text</i>
             text = re.sub(r'\*(.*?)\*', r'<i>\1</i>', text)
-            # Code: `text` -> kırmızı courier font
+            
+            # Code: `text` -> kırmızı courier font (Kod blokları genelde Courier kalır)
             text = re.sub(r'`(.*?)`', r'<font face="Courier" color="#e74c3c">\1</font>', text)
             return text
 
-        # --- Tablo İşleme ---
-        table_buffer = [] # Tablo satırlarını burada biriktireceğiz
+        # --- 3. Ana İşleme Döngüsü ---
+        table_buffer = [] 
         in_table = False
 
         for line in lines:
             original_line = line.strip()
             
-            # 1. TABLO TESPİTİ
+            # --- A) TABLO İŞLEME ---
             if original_line.startswith('|'):
                 in_table = True
-                # Hücreleri ayır
                 cells = [c.strip() for c in original_line.split('|')]
-                # İlk ve son boş elemanları temizle (Markdown tabloları | ile başlar ve biter)
+                
                 if len(cells) > 1 and cells[0] == '': cells.pop(0)
                 if len(cells) > 0 and cells[-1] == '': cells.pop(-1)
                 
-                # Ayırıcı satırı kontrol et (:--- gibi)
                 is_separator = all(re.match(r'^[\s\-:]+$', c) for c in cells)
                 
                 if not is_separator and cells:
-                    # Hücre içindeki markdown'ı işle (bold vs.)
                     row_data = []
-                    # Eğer bu tablonun ilk satırıysa (Başlık) farklı stil kullan
                     is_header_row = (len(table_buffer) == 0)
                     
                     for cell in cells:
@@ -589,30 +709,28 @@ async def markdown_to_pdf(request: MarkdownToPdfRequest):
                         row_data.append(Paragraph(formatted_cell, current_style))
                     
                     table_buffer.append(row_data)
-                continue
+                continue 
             
             else:
-                # Tablo bittiyse ve buffer doluysa çiz
                 if in_table and table_buffer:
                     col_count = max(len(row) for row in table_buffer)
                     if col_count > 0:
-                        # Sayfa genişliğine göre sütun genişliği ayarla
-                        # A4 width ~595pt. Margins 40+40=80. Usable ~515.
-                        avail_width = A4[0] - 80
+                        avail_width = A4[0] - 80 
                         col_width = avail_width / col_count
                         
                         t = Table(table_buffer, colWidths=[col_width] * col_count)
-                        
-                        # Tablo Stili
                         t.setStyle(TableStyle([
-                            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#1a365d")), # Header Arkaplan (Lacivert)
-                            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),                # Header Yazı (Beyaz)
+                            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#1a365d")), 
+                            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
                             ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
                             ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-                            ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),                # Çizgiler
-                            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor("#f8f9fa")]), # Zebra satırlar
+                            ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+                            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor("#f8f9fa")]),
                             ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
                             ('TOPPADDING', (0, 0), (-1, -1), 8),
+                            # Tablo Fontları
+                            ('FONTNAME', (0, 0), (-1, -1), FONT_NAME_REGULAR), 
+                            ('FONTNAME', (0, 0), (-1, 0), FONT_NAME_BOLD),     
                         ]))
                         story.append(t)
                         story.append(Spacer(1, 12))
@@ -623,36 +741,44 @@ async def markdown_to_pdf(request: MarkdownToPdfRequest):
             if not original_line:
                 continue
 
-            # 2. METİN FORMATLAMA
-            formatted_text = format_inline_markdown(original_line)
-
-            # Başlık Seviye 1 (I. II. III. veya #)
-            if original_line.startswith('# ') or re.match(r'^[IVX]+\.', original_line):
-                clean_text = formatted_text.lstrip('#').strip()
-                story.append(Paragraph(clean_text, style_heading_1))
+            # --- B) METİN VE BAŞLIK İŞLEME ---
             
-            # Başlık Seviye 2 (A. B. C. veya ##)
-            elif original_line.startswith('## ') or re.match(r'^[A-Z]\.', original_line):
-                clean_text = formatted_text.lstrip('#').strip()
-                story.append(Paragraph(clean_text, style_heading_2))
+            header_match = re.match(r'^(#{1,6})\s+(.*)', original_line)
+            
+            if header_match:
+                level = len(header_match.group(1)) 
+                raw_text = header_match.group(2)   
+                clean_text = format_inline_markdown(raw_text)
 
-            # Liste Maddeleri (•, -, *)
+                if level == 1:
+                    story.append(Paragraph(clean_text, style_heading_1))
+                elif level == 2:
+                    story.append(Paragraph(clean_text, style_heading_2))
+                else:
+                    story.append(Paragraph(clean_text, style_heading_3))
+
+            elif re.match(r'^[IVX]+\.', original_line):
+                formatted_text = format_inline_markdown(original_line)
+                story.append(Paragraph(formatted_text, style_heading_1))
+
+            elif re.match(r'^[A-Z]\.', original_line):
+                formatted_text = format_inline_markdown(original_line)
+                story.append(Paragraph(formatted_text, style_heading_2))
+
             elif original_line.startswith(('-', '*', '•')):
-                # Başındaki işareti temizle
+                formatted_text = format_inline_markdown(original_line)
                 clean_text = re.sub(r'^[\-\*\•]\s*', '', formatted_text)
                 story.append(Paragraph(f"• {clean_text}", style_bullet))
 
-            # Normal Paragraf
             else:
+                formatted_text = format_inline_markdown(original_line)
                 story.append(Paragraph(formatted_text, style_normal))
 
-        # Döngü bittiğinde, dosya sonunda tablo varsa çiz
+        # --- C) DOSYA SONU KONTROLÜ ---
         if in_table and table_buffer:
              col_count = max(len(row) for row in table_buffer)
-             # Genişlik hesabı (Tekrar)
              avail_width = A4[0] - 80
              col_width = avail_width / col_count
-             
              t = Table(table_buffer, colWidths=[col_width]*col_count)
              t.setStyle(TableStyle([
                  ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#1a365d")),
@@ -662,6 +788,8 @@ async def markdown_to_pdf(request: MarkdownToPdfRequest):
                  ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor("#f8f9fa")]),
                  ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
                  ('TOPPADDING', (0, 0), (-1, -1), 8),
+                 ('FONTNAME', (0, 0), (-1, -1), FONT_NAME_REGULAR),
+                 ('FONTNAME', (0, 0), (-1, 0), FONT_NAME_BOLD),
              ]))
              story.append(t)
 
@@ -677,7 +805,8 @@ async def markdown_to_pdf(request: MarkdownToPdfRequest):
     except Exception as e:
         print(f"❌ PDF Hatası: {str(e)}")
         raise HTTPException(status_code=500, detail=f"PDF hatası: {str(e)}")
-
+    
+    
 class TTSRequest(BaseModel):
     text: str
 
@@ -705,8 +834,10 @@ async def listen_summary(
     user_id = None
     if authorization:
         try:
-            user_data = get_current_user(authorization)
-            user_id = user_data.get("sub")
+            token = authorization.split("Bearer ")[1] if "Bearer " in authorization else authorization
+            import jwt
+            payload = jwt.decode(token, settings.JWT_SECRET, algorithms=["HS256"])
+            user_id = payload.get("sub")
             print(f"✅ Token Çözüldü. User ID: {user_id}")
         except:
             pass
@@ -718,7 +849,8 @@ async def listen_summary(
         client = None
         try:
             client = httpx.AsyncClient(timeout=120.0, follow_redirects=True)
-            async with client.stream("POST", ai_tts_url, json={"text": cleaned_text}) as response:
+            headers = get_ai_service_headers()
+            async with client.stream("POST", ai_tts_url, json={"text": cleaned_text}, headers=headers) as response:
                 if response.status_code != 200:
                     return 
                 async for chunk in response.aiter_bytes():
@@ -744,7 +876,7 @@ async def upload_pdf(
     file: UploadFile = File(...),
     authorization: Optional[str] = Header(None),
     x_guest_id: Optional[str] = Header(None, alias="X-Guest-ID"),
-    supabase: Client = Depends(get_supabase)
+    db: Session = Depends(get_db)
 ):
     if file.content_type != "application/pdf":
         raise HTTPException(status_code=400, detail="Only PDF files allowed")
@@ -752,8 +884,10 @@ async def upload_pdf(
     user_id = None
     if authorization:
         try:
-            user_data = get_current_user(authorization)
-            user_id = user_data.get("sub")
+            token = authorization.split("Bearer ")[1] if "Bearer " in authorization else authorization
+            import jwt
+            payload = jwt.decode(token, settings.JWT_SECRET, algorithms=["HS256"])
+            user_id = payload.get("sub")
         except:
             pass
     
@@ -764,58 +898,77 @@ async def upload_pdf(
     await validate_file_size(file, is_guest=is_guest_user)
     
     try:
-        upload_result = await storage_service.upload_file(file, user_id)
+        # PDF'i oku
+        pdf_content = await file.read()
+        filename = file.filename or "document.pdf"
         
+        # Sadece kayıtlı kullanıcılar için DB'ye kaydet
         if not is_guest_user:
-            document_data = {
-                "user_id": user_id,
-                "filename": upload_result["filename"],
-                "storage_path": upload_result["path"],
-                "status": "uploaded"
+            pdf_record = save_pdf_to_db(db, user_id, pdf_content, filename)
+            return {
+                "file_id": pdf_record.id,
+                "filename": pdf_record.filename or filename,
+                "file_size": pdf_record.file_size
             }
-            res = supabase.table("documents").insert(document_data).execute()
-            if res.data:
-                file_id = res.data[0]["id"]
-                return {"file_id": file_id, "filename": upload_result["filename"], "file_path": upload_result["path"]}
         
-        return {"filename": upload_result["filename"], "file_path": upload_result["path"]}
+        # Misafir kullanıcılar için sadece filename döndür (DB'ye kaydetmiyoruz)
+        return {"filename": filename, "message": "Guest upload - not saved to database"}
         
     except Exception as e:
-        print(f"Upload error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Upload error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Upload failed")
 
 @router.get("/my-files")
 async def get_my_files(
     current_user: dict = Depends(get_current_user),
-    supabase: Client = Depends(get_supabase)
+    db: Session = Depends(get_db)
 ):
     try:
         user_id = current_user.get("sub")
-        response = supabase.table("documents").select("id, filename, status, created_at").eq("user_id", user_id).order("created_at", desc=True).execute()
-        return {"files": response.data, "total": len(response.data)}
+        if not user_id:
+            raise HTTPException(status_code=401, detail="User ID not found")
+        
+        pdfs = list_user_pdfs(db, user_id)
+        files = [
+            {
+                "id": pdf.id,
+                "filename": pdf.filename,
+                "file_size": pdf.file_size,
+                "created_at": pdf.created_at.isoformat() if pdf.created_at else None
+            }
+            for pdf in pdfs
+        ]
+        return {"files": files, "total": len(files)}
+    except HTTPException:
+        raise
     except Exception as e:
+        logger.error(f"Get files error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.delete("/files/{file_id}")
 async def delete_file(
-    file_id: int,
+    file_id: str,
     current_user: dict = Depends(get_current_user),
-    supabase: Client = Depends(get_supabase)
+    db: Session = Depends(get_db)
 ):
     try:
         user_id = current_user.get("sub")
-        res = supabase.table("documents").select("*").eq("id", file_id).single().execute()
+        if not user_id:
+            raise HTTPException(status_code=401, detail="User ID not found")
         
-        if not res.data or res.data["user_id"] != user_id:
-            raise HTTPException(status_code=403, detail="Yetkisiz işlem")
+        # Önce PDF'in kullanıcıya ait olduğunu kontrol et
+        pdf = get_pdf_from_db(db, file_id, user_id)
+        if not pdf:
+            raise HTTPException(status_code=404, detail="PDF bulunamadı veya yetkiniz yok")
         
-        if os.path.exists(res.data["storage_path"]):
-            os.remove(res.data["storage_path"])
-        
-        supabase.table("documents").delete().eq("id", file_id).execute()
+        # PDF'i sil
+        delete_pdf_from_db(db, file_id, user_id)
         return {"message": "Silindi", "file_id": file_id}
         
+    except HTTPException:
+        raise
     except Exception as e:
+        logger.error(f"Delete file error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -838,7 +991,10 @@ async def convert_text_from_pdf(
     user_id = None
     if authorization:
         try:
-            user_id = get_current_user(authorization).get("sub")
+            token = authorization.split("Bearer ")[1] if "Bearer " in authorization else authorization
+            import jwt
+            payload = jwt.decode(token, settings.JWT_SECRET, algorithms=["HS256"])
+            user_id = payload.get("sub")
             print(f"✅ Token Çözüldü. User ID: {user_id}")
         except: pass
 
@@ -871,14 +1027,17 @@ async def extract_pdf_pages(
     supabase: Client = Depends(get_supabase)
 ):
     """Sayfa ayıklama."""
-    print("\n--- EXTRACT-PAGES İSTEĞİ ---")
+    logger.debug("EXTRACT-PAGES İSTEĞİ alındı")
     
     # USER ID ÇÖZÜMLEME
     user_id = None
     if authorization:
         try:
-            user_id = get_current_user(authorization).get("sub")
-            print(f"✅ Token Çözüldü. User ID: {user_id}")
+            token = authorization.split("Bearer ")[1] if "Bearer " in authorization else authorization
+            import jwt
+            payload = jwt.decode(token, settings.JWT_SECRET, algorithms=["HS256"])
+            user_id = payload.get("sub")
+            logger.debug(f"Token çözüldü. User ID: {user_id}")
         except: pass
 
     try:
@@ -903,8 +1062,8 @@ async def extract_pdf_pages(
             
         return StreamingResponse(out, media_type="application/pdf", headers={"Content-Disposition": 'attachment; filename="extracted.pdf"'})
     except Exception as e:
-        print(f"Hata: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Extract pages hatası: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Sunucu hatası")
 
 
 @router.post("/merge-pdfs")
@@ -922,7 +1081,10 @@ async def merge_pdfs(
     user_id = None
     if authorization:
         try:
-            user_id = get_current_user(authorization).get("sub")
+            token = authorization.split("Bearer ")[1] if "Bearer " in authorization else authorization
+            import jwt
+            payload = jwt.decode(token, settings.JWT_SECRET, algorithms=["HS256"])
+            user_id = payload.get("sub")
             print(f"✅ Token Çözüldü. User ID: {user_id}")
         except: pass
         
@@ -950,19 +1112,30 @@ async def merge_pdfs(
 async def save_processed_pdf(
     file: UploadFile = File(...),
     filename: str = Form(...),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
 ):
     try:
         user_id = current_user.get("sub")
-        upload_result = await storage_service.upload_file(file, user_id)
+        if not user_id:
+            raise HTTPException(status_code=401, detail="User ID not found")
+        
+        # PDF'i oku
+        pdf_content = await file.read()
+        
+        # DB'ye kaydet
+        pdf_record = save_pdf_to_db(db, user_id, pdf_content, filename)
         
         return {
-            "filename": filename,
-            "size_kb": round(upload_result["size"] / 1024, 2),
-            "saved_path": upload_result["path"],
+            "file_id": pdf_record.id,
+            "filename": pdf_record.filename or filename,
+            "size_kb": round(pdf_record.file_size / 1024, 2) if pdf_record.file_size else 0,
             "message": "File saved successfully"
         }
+    except HTTPException:
+        raise
     except Exception as e:
+        logger.error(f"Save processed error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/reorder")
@@ -979,7 +1152,10 @@ async def reorder_pdf(
     user_id = None
     if authorization:
         try:
-            user_id = get_current_user(authorization).get("sub")
+            token = authorization.split("Bearer ")[1] if "Bearer " in authorization else authorization
+            import jwt
+            payload = jwt.decode(token, settings.JWT_SECRET, algorithms=["HS256"])
+            user_id = payload.get("sub")
             print(f"✅ Token Çözüldü. User ID: {user_id}")
         except: pass
 
@@ -1018,26 +1194,66 @@ async def get_user_stats(
     current_user: dict = Depends(get_current_user),
     supabase: Client = Depends(get_supabase)
 ):
-    """Giriş yapmış kullanıcının istatistiklerini getirir."""
+    """Giriş yapmış kullanıcının istatistiklerini ve rolünü (Standart, Pro, Admin) getirir."""
     try:
         user_id = current_user.get("sub")
         if not user_id:
              raise HTTPException(status_code=401, detail="User ID not found")
 
-        response = supabase.table("user_stats")\
+        # 1. İstatistikleri Çek (user_stats tablosu)
+        summary_count = 0
+        tools_count = 0
+        
+        stats_response = supabase.table("user_stats")\
             .select("summary_count,tools_count")\
             .eq("user_id", user_id)\
             .execute()
+            
+        if stats_response.data:
+            summary_count = stats_response.data[0].get("summary_count", 0)
+            tools_count = stats_response.data[0].get("tools_count", 0)
+
+        # 2. Rol Bilgisini Çek
+        # Varsayılan rol "Standart" olsun
+        role_name = "Standart"
         
-        if response.data:
-            return UserStatsResponse(**response.data[0])
-        else:
-            return UserStatsResponse(summary_count=0, tools_count=0)
+        try:
+            # users tablosundan role_id'yi bulup, user_roles tablosundan ismini alıyoruz.
+            # Not: Supabase'de Foreign Key kuruluysa şu sorgu çalışır:
+            user_response = supabase.table("users")\
+                .select("user_roles(name)")\
+                .eq("id", user_id)\
+                .execute()
+            
+            # Gelen veri yapısı genellikle şöyledir: [{'user_roles': {'name': 'Pro'}}]
+            if user_response.data:
+                user_data = user_response.data[0]
+                
+                # İlişkili veri obje olarak gelebilir
+                if user_data.get("user_roles"):
+                    roles_data = user_data["user_roles"]
+                    
+                    # Eğer liste ise ilkini al
+                    if isinstance(roles_data, list) and len(roles_data) > 0:
+                        role_name = roles_data[0].get("name", "Standart")
+                    # Eğer sözlük (dict) ise direkt al
+                    elif isinstance(roles_data, dict):
+                        role_name = roles_data.get("name", "Standart")
+                        
+        except Exception as role_error:
+            print(f"⚠️ Rol çekilemedi, varsayılan atandı: {role_error}")
+            # Hata olursa 'Standart' olarak kalsın
+
+        return UserStatsResponse(
+            summary_count=summary_count, 
+            tools_count=tools_count,
+            role=role_name # Admin, Pro veya Standart dönecek
+        )
 
     except Exception as e:
-        print(f"❌ İstatistik çekme hatası: {str(e)}")
-        # Hata durumunda frontend'i bozmamak için 0 dön
-        return UserStatsResponse(summary_count=0, tools_count=0)
+        print(f"❌ İstatistik hatası: {str(e)}")
+        # Genel hatada frontend bozulmasın
+        return UserStatsResponse(summary_count=0, tools_count=0, role="Standart")
     
 
 # ==========================================

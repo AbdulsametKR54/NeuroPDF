@@ -1,59 +1,102 @@
-from sqlalchemy import create_engine
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
-from supabase import create_client, Client
-from dotenv import load_dotenv
+# app/db.py
 import os
-from urllib.parse import quote_plus
+import logging
+from pathlib import Path
+from dotenv import load_dotenv
 
-load_dotenv()
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import sessionmaker, declarative_base
+from sqlalchemy.engine import URL
 
-# Supabase Client (API operasyonları için)
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+from supabase import create_client, Client
 
-if not SUPABASE_URL or not SUPABASE_KEY:
-    raise ValueError("SUPABASE_URL and SUPABASE_KEY must be set in .env file")
+logger = logging.getLogger(__name__)
 
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+# -------------------------------------------------
+# Load .env deterministically (avoid uvicorn cwd issues)
+# -------------------------------------------------
+ENV_PATH = Path(__file__).resolve().parents[1] / ".env"  # backend/.env
+load_dotenv(dotenv_path=ENV_PATH, override=False)
 
-# SQLAlchemy (ORM ve Migration için - opsiyonel)
-USER = os.getenv("user")
-PASSWORD = os.getenv("password")
-HOST = os.getenv("host")
-PORT = os.getenv("port", "5432")
-DBNAME = os.getenv("dbname")
-
-# SQLAlchemy engine (sadece migration veya ORM kullanacaksanız)
-engine = None
-SessionLocal = None
 Base = declarative_base()
 
-if all([USER, PASSWORD, HOST, DBNAME]):
-    try:
-        encoded_password = quote_plus(PASSWORD)
-        DATABASE_URL = f"postgresql+psycopg2://{USER}:{encoded_password}@{HOST}:{PORT}/{DBNAME}?sslmode=require"
-        
-        engine = create_engine(
-            DATABASE_URL,
-            pool_pre_ping=True,
-            connect_args={"connect_timeout": 10}
-        )
-        SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    except Exception as e:
-        print(f"Warning: SQLAlchemy engine could not be created: {e}")
-        print("Using Supabase client only...")
+# =================================================
+# SUPABASE CLIENT (REST) - optional
+# =================================================
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+
+supabase: Client | None = None
+if SUPABASE_URL and SUPABASE_KEY:
+    supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+else:
+    # This does NOT affect SQLAlchemy migrations; just REST client.
+    logger.warning("SUPABASE_URL or SUPABASE_KEY is missing (REST client disabled).")
+
+def get_supabase() -> Client:
+    if supabase is None:
+        raise RuntimeError("Supabase client not configured. SUPABASE_URL / SUPABASE_KEY missing.")
+    return supabase
+
+# =================================================
+# SQLALCHEMY (Postgres)
+# =================================================
+DB_USER = os.getenv("DB_USER")
+DB_PASSWORD = os.getenv("DB_PASSWORD")
+DB_HOST = os.getenv("DB_HOST")
+DB_PORT = os.getenv("DB_PORT", "5432")
+DB_NAME = os.getenv("DB_NAME", "postgres")
+DB_SSLMODE = os.getenv("DB_SSLMODE", "require")
+
+def build_db_url() -> URL:
+    missing = [k for k, v in {
+        "DB_USER": DB_USER,
+        "DB_PASSWORD": DB_PASSWORD,
+        "DB_HOST": DB_HOST,
+        "DB_NAME": DB_NAME,
+    }.items() if not v]
+
+    if missing:
+        raise RuntimeError(f"DB config missing: {', '.join(missing)} (check {ENV_PATH})")
+
+    return URL.create(
+        "postgresql+psycopg2",
+        username=DB_USER,
+        password=DB_PASSWORD,  # URL.create handles encoding
+        host=DB_HOST,
+        port=int(DB_PORT),
+        database=DB_NAME,
+        query={"sslmode": DB_SSLMODE},
+    )
+
+db_url = build_db_url()
+
+logger.info(f"SQLAlchemy DB USER = {DB_USER}")
+logger.info(f"SQLAlchemy DB HOST = {DB_HOST}")
+logger.info(f"SQLAlchemy DB NAME = {DB_NAME}")
+
+engine = create_engine(
+    db_url,
+    pool_pre_ping=True,
+    pool_recycle=180,  # helps with pooler / idle timeouts
+)
+
+# ---- fail fast: test connection at startup (prevents random 500 later)
+try:
+    with engine.connect() as conn:
+        conn.execute(text("select 1"))
+    logger.info("DB connection test OK")
+except Exception as e:
+    logger.error(f"DB connection test FAILED: {repr(e)}", exc_info=True)
+    raise
+
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+logger.info(f"ENGINE URL = {engine.url.render_as_string(hide_password=True)}")
 
 def get_db():
-    """SQLAlchemy session dependency (if engine is available)"""
-    if SessionLocal is None:
-        raise RuntimeError("SQLAlchemy is not configured. Use Supabase client instead.")
     db = SessionLocal()
     try:
         yield db
     finally:
         db.close()
-
-def get_supabase() -> Client:
-    """Supabase client dependency"""
-    return supabase

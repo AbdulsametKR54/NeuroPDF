@@ -3,7 +3,7 @@ export type Language = 'tr' | 'en';
 export const translations = {
   tr: {
     // --- NAVIGATION (Menü Linkleri) ---
-    navUpload: "PDF Yükle",
+    navUpload: "PDF Görüntüleme",
     navMerge: "PDF Birleştir",
     navConvert: "PDF to TXT",
     navExtract: "Sayfa Çıkar",
@@ -16,6 +16,7 @@ export const translations = {
     error: "Bir hata oluştu",
     success: "İşlem Başarılı",
     warning: "Uyarı",
+    invalidFileType: "Geçersiz dosya türü. Sadece PDF dosyaları kabul edilir.",
 
     // --- EULA ---
     eulaTitle: "EULA",
@@ -28,6 +29,12 @@ export const translations = {
     aiOperations: "AI İşlemi",
     loggedInAs: "Giriş yapıldı:",
     notLoggedIn: "Henüz giriş yapmadın.",
+    globalStats: "Genel Bakış",
+    myStats: "İstatistiklerim",
+    accountStatus: "Hesap Durumu",
+    myFilesProcessed: "İşlediğim Dosyalar",
+    myAiOperations: "AI İşlemlerim",
+    accountType:"Hesap Türü",
     
     // --- AUTH (Giriş & Kayıt) ---
     loginTitle: "Hesabınıza giriş yapın",
@@ -47,7 +54,7 @@ export const translations = {
     authRequiredToken: "Kimlik doğrulama tokenı bulunamadı. Lütfen tekrar giriş yapın.",
     googleLogin: "Google ile Giriş Yap",
     or: "veya",
-    noAccount: "Hesabın yok mu?",
+    noAccount: "Hesabın yok mu? Hemen üye ol.",
     hasAccount: "Zaten hesabın var mı?",
     createAccount: "Hemen Oluştur",
     guestLogin: "Misafir Girişi",
@@ -149,6 +156,7 @@ export const translations = {
     listenSummary: "Özeti Dinle",
     waitAudioGen: "Yapay zeka metni sese çevirirken lütfen bekleyin.",
     waitPdfAnalysis: "PDF analizi yapılıyor, bu işlem biraz sürebilir.",
+    downloadAudio: "Sesi İndir MP3",
 
     // --- PDF VIEWER & PANEL ---
     activePdfTitle: "📄 Aktif PDF",
@@ -162,7 +170,17 @@ export const translations = {
     next: "Sonraki",
     pdfLoadError: "PDF yüklenemedi.",
     preparingFile: "Dosya hazırlanıyor...",
-    
+
+    // --- PDF CHAT ---
+    chatWelcome: "👋 Merhaba! Dosyayı analiz ettim. Bana her şeyi sorabilirsin.",
+    chatInitError: "🚫 Sohbet başlatılamadı.",
+    chatConnError: "⚠️ Bağlantı hatası oluştu.",
+    analyzing: "Belge analiz ediliyor...",
+    aiTyping: "Neuro yanıt yazıyor...",
+    chatPlaceholder: "PDF hakkında bir soru sorun...",
+    chatDisclaimer: "NeuroPDF yapay zekası bazen hata yapabilir. Lütfen bilgileri kontrol edin.",
+
+
     // --- PROFILE & ACCOUNT ---
     profileTitle: "Profilim",
     goBack: "Geri Dön",
@@ -187,6 +205,26 @@ export const translations = {
     pleaseWait: "Verileriniz temizleniyor, lütfen bekleyin...",
     cancel: "Vazgeç",
     confirmDelete: "Evet, Hesabı Sil",
+    aiPreference: "AI Model Tercihi",
+    localFeatures: "YEREL ÖZELLİKLER",
+    cloudFeatures: "BULUT ÖZELLİKLERİ",
+    localFeat1: "Maksimum Gizlilik (Verileriniz sunucudan çıkmaz).",
+    localFeat2: "İnternet bağlantısı olmadan da çalışabilir.",
+    localFeat3: "Donanıma bağlı hız ve doğruluk.",
+    cloudFeat1: "En Yüksek Doğruluk (Gemini 1.5 / GPT-4).",
+    cloudFeat2: "Geniş bağlam ve karmaşık analiz yeteneği.",
+    cloudFeat3: "Veriler işlenmek üzere servis sağlayıcıya gönderilir.",
+    savePreference: "Tercihleri Kaydet",
+    changeProfileImage: "Profil Resmini Değiştir",
+    chooseImageOption: "Yeni profil resminiz için bir yöntem seçin.",
+    uploadPng: "PNG Dosyası Yükle",
+    uploadPngHint: "Bilgisayarınızdan bir PNG görseli seçin.",
+    generateWithAI: "AI ile Resim Çizdir",
+    generateWithAIHint: "Yapay zeka ile size özel bir avatar oluşturun.",
+    onlyPngAllowed: "Sadece PNG dosyaları yüklenebilir.",
+    generating: "Oluşturuluyor...",
+    imageUploadSuccess: "Profil resmi başarıyla güncellendi!",
+    imageUploadError: "Resim yüklenirken bir hata oluştu.",
 
     // --- ORTAK EYLEMLER (Common Actions) ---
     download: "İndir",
@@ -206,7 +244,7 @@ export const translations = {
   },
   en: {
     // --- NAVIGATION ---
-    navUpload: "Upload PDF",
+    navUpload: "PDF Preview",
     navMerge: "Merge PDFs",
     navConvert: "PDF to TXT",
     navExtract: "Extract Pages",
@@ -219,7 +257,8 @@ export const translations = {
     error: "An error occurred",
     success: "Success",
     warning: "Warning",
-
+    invalidFileType: "Invalid file type. Only PDF files are accepted.",
+    
     // --- EULA ---
     eulaTitle: "EULA",
 
@@ -231,6 +270,12 @@ export const translations = {
     aiOperations: "AI Operations",
     loggedInAs: "Logged in as:",
     notLoggedIn: "You have not logged in yet.",
+    globalStats: "Global Overview",
+    myStats: "My Statistics",
+    accountStatus: "Account Status",
+    myFilesProcessed: "My Files Processed",
+    myAiOperations: "My AI Operations",
+    accountType:"Account Type",
 
     // --- AUTH ---
     loginTitle: "Sign in to your account",
@@ -250,7 +295,7 @@ export const translations = {
     authRequiredToken: "Authentication token not found. Please log in again.",
     googleLogin: "Sign in with Google",
     or: "or",
-    noAccount: "Don't have an account?",
+    noAccount: "Don't have an account? Sign up now.",
     hasAccount: "Already have an account?",
     createAccount: "Create Now",
     guestLogin: "Guest Login",
@@ -351,6 +396,7 @@ export const translations = {
     listenSummary: "Listen to Summary",
     waitAudioGen: "Please wait while AI converts text to speech.",
     waitPdfAnalysis: "Analyzing PDF, this may take a moment.",
+    downloadAudio: "Download Audio MP3",
 
     // --- PDF VIEWER & PANEL ---
     activePdfTitle: "📄 Active PDF",
@@ -365,6 +411,15 @@ export const translations = {
     pdfLoadError: "PDF could not be loaded.",
     preparingFile: "Preparing file...",
     
+    // --- PDF VIEWER & PANEL ---
+    chatWelcome: "👋 Hello! I have analyzed the document. You can ask me anything.",
+    chatInitError: "🚫 Chat could not be started.",
+    chatConnError: "⚠️ A connection error occurred.",
+    analyzing: "Analyzing document...",
+    aiTyping: "Neuro is typing...",
+    chatPlaceholder: "Ask a question about the PDF...",
+    chatDisclaimer: "NeuroPDF AI can make mistakes. Please verify important information.",    
+
     // --- PROFILE & ACCOUNT ---
     profileTitle: "My Profile",
     goBack: "Go Back",
@@ -389,6 +444,26 @@ export const translations = {
     pleaseWait: "Clearing your data, please wait...",
     cancel: "Cancel",
     confirmDelete: "Yes, Delete Account",
+    aiPreference: "AI Model Preference",
+    localFeatures: "LOCAL FEATURES",
+    cloudFeatures: "CLOUD FEATURES",
+    localFeat1: "Maximum Privacy (Data stays on device).",
+    localFeat2: "Works without internet connection.",
+    localFeat3: "Speed depends on hardware.",
+    cloudFeat1: "Highest Accuracy (Gemini 1.5 / GPT-4).",
+    cloudFeat2: "Large context and complex reasoning.",
+    cloudFeat3: "Data is sent to provider for processing.",
+    savePreference: "Save Preference",
+    changeProfileImage: "Change Profile Image",
+    chooseImageOption: "Choose a method for your new profile picture.",
+    uploadPng: "Upload PNG File",
+    uploadPngHint: "Select a PNG image from your computer.",
+    generateWithAI: "Generate with AI",
+    generateWithAIHint: "Create a custom avatar using AI.",
+    onlyPngAllowed: "Only PNG files are allowed.",
+    generating: "Generating...",
+    imageUploadSuccess: "Profile image updated successfully!",
+    imageUploadError: "An error occurred while uploading the image.",
 
     // --- COMMON ACTIONS ---
     download: "Download",

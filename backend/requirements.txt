@@ -18,3 +18,4 @@ redis
 httpx
 email-validator
 reportlab
+bcrypt

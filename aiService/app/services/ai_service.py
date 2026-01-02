@@ -21,8 +21,7 @@ pro_model = genai.GenerativeModel("models/gemini-pro-latest")
 # ==========================================
 # Session Store (PDF Sohbet Hafızası)
 # ==========================================
-# session_id -> { text, filename, history:[{role, content}], created_at }
-# Not: Sunucu yeniden başlarsa bu hafıza silinir (MVP için uygundur).
+# session_id -> { text, filename, history:[{role, content}], created_at, llm_provider, mode }
 _PDF_CHAT_SESSIONS = {}
 SESSION_TTL_SECONDS = 60 * 60  # 1 saat
 
@@ -50,7 +49,6 @@ def _is_quota_or_rate_limit_error(err: Exception) -> bool:
 def _generate_with_retry(model, prompt: str, attempts: int = 5):
     """
     API çağrısını yapar. 429 hatası alırsa bekleyip tekrar dener.
-    Exponential Backoff: Her denemede bekleme süresi artar (1s, 2s, 4s...).
     """
     last_err = None
     for i in range(attempts):
@@ -59,12 +57,11 @@ def _generate_with_retry(model, prompt: str, attempts: int = 5):
         except Exception as e:
             last_err = e
             if _is_quota_or_rate_limit_error(e):
-                # Bekleme süresi: (2^i) + rastgele küçük bir süre (jitter)
                 sleep_s = min(60, (2 ** i)) + random.random() * 0.5
                 print(f"⚠️ Gemini Rate Limit ({i+1}/{attempts}). {sleep_s:.2f}s bekleniyor...")
                 time.sleep(sleep_s)
                 continue
-            raise # Başka bir hataysa direkt fırlat
+            raise 
     raise last_err
 
 
@@ -73,14 +70,9 @@ def _generate_with_retry(model, prompt: str, attempts: int = 5):
 # ==========================================
 
 def gemini_generate(text_content: str, prompt_instruction: str, mode: str = "flash") -> str:
-    """
-    Senkron (anlık) işlemler için kullanılır. (Örn: Misafir özeti)
-    mode: 'flash' (hızlı) veya 'pro' (akıllı)
-    """
     if not text_content:
         raise HTTPException(status_code=400, detail="Boş içerik gönderildi.")
 
-    # Metin çok uzunsa kırp (Flash limiti için güvenlik önlemi)
     MAX_TEXT_LENGTH = 50000
     if len(text_content) > MAX_TEXT_LENGTH:
         text_content = text_content[:MAX_TEXT_LENGTH]
@@ -97,7 +89,6 @@ def gemini_generate(text_content: str, prompt_instruction: str, mode: str = "fla
             status_code=400, 
             detail="AI'dan geçerli bir yanıt alınamadı (içerik engellenmiş olabilir)."
         )
-
     except HTTPException:
         raise
     except Exception as e:
@@ -107,10 +98,7 @@ def gemini_generate(text_content: str, prompt_instruction: str, mode: str = "fla
 
 
 def call_gemini_for_task(text_content: str, prompt_instruction: str) -> str:
-    """
-    Celery (Arka Plan) görevleri için kullanılır.
-    STRATEJİ: Önce 'Pro' modelini dener. Hata verirse 'Flash' modeline düşer (Fallback).
-    """
+    """Celery (Arka Plan) görevleri için kullanılır."""
     if not text_content or not text_content.strip():
         raise HTTPException(status_code=400, detail="Boş içerik gönderildi.")
 
@@ -126,7 +114,6 @@ def call_gemini_for_task(text_content: str, prompt_instruction: str) -> str:
         if getattr(resp, "candidates", None):
             return resp.text
     except Exception as e:
-        # Eğer hata Rate Limit değilse, direkt patlat. Rate limit ise Flash dene.
         if not _is_quota_or_rate_limit_error(e):
             raise e
         print("⚠️ Gemini Pro kotası dolu, Flash modeline geçiliyor...")
@@ -147,9 +134,15 @@ def call_gemini_for_task(text_content: str, prompt_instruction: str) -> str:
 # PDF Chat Fonksiyonları
 # ==========================================
 
-def create_pdf_chat_session(pdf_text: str, filename: str | None = None) -> str:
+# DÜZELTME: Router'dan gelen 'llm_provider' ve 'mode' parametreleri buraya eklendi.
+def create_pdf_chat_session(
+    pdf_text: str, 
+    filename: str | None = None, 
+    llm_provider: str = "cloud", 
+    mode: str = "flash"
+) -> str:
     """Yeni bir sohbet oturumu başlatır ve ID döner."""
-    _cleanup_sessions() # Eski oturumları temizle
+    _cleanup_sessions()
     session_id = str(uuid.uuid4())
 
     _PDF_CHAT_SESSIONS[session_id] = {
@@ -157,12 +150,18 @@ def create_pdf_chat_session(pdf_text: str, filename: str | None = None) -> str:
         "filename": filename or "uploaded.pdf",
         "history": [],
         "created_at": time.time(),
+        "llm_provider": llm_provider, # Tercihi kaydet
+        "mode": mode,                 # Tercihi kaydet
     }
     return session_id
 
 
 def chat_with_pdf(session_id: str, user_message: str) -> str:
-    """Mevcut bir oturum üzerinden PDF ile konuşur."""
+    """
+    NOT: Bu fonksiyon ai_service içindeki local Gemini chat fonksiyonudur.
+    Router tarafında 'chat_over_pdf' (llm_manager) kullanılıyorsa bu kullanılmayabilir,
+    ancak legacy destek veya fallback için burada tutulmuştur.
+    """
     _cleanup_sessions()
 
     session = _PDF_CHAT_SESSIONS.get(session_id)
@@ -176,7 +175,6 @@ def chat_with_pdf(session_id: str, user_message: str) -> str:
     filename = session["filename"]
     history = session["history"]
 
-    # Bağlamı (Context) hazırlama
     MAX_CONTEXT_CHARS = 45000
     pdf_context = pdf_text[:MAX_CONTEXT_CHARS] if len(pdf_text) > MAX_CONTEXT_CHARS else pdf_text
 
@@ -186,7 +184,6 @@ def chat_with_pdf(session_id: str, user_message: str) -> str:
         "Cevaplarını Türkçe ver, net ve pratik ol.\n"
     )
 
-    # Sohbet geçmişini metne dök (Son 10 mesaj)
     history_text = ""
     for turn in history[-10:]:
         history_text += f"{turn['role'].upper()}: {turn['content']}\n"
@@ -210,7 +207,6 @@ KULLANICI SORUSU:
 {user_message}
 """.strip()
 
-    # Chat isteği: Önce Pro, olmazsa Flash
     try:
         try:
             response = _generate_with_retry(pro_model, prompt, attempts=3)
@@ -225,7 +221,6 @@ KULLANICI SORUSU:
 
         answer = response.text
 
-        # Hafızayı güncelle
         history.append({"role": "user", "content": user_message})
         history.append({"role": "assistant", "content": answer})
 

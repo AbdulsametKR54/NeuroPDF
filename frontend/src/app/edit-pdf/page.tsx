@@ -3,7 +3,26 @@
 import { useCallback, useState } from "react";
 import { useDropzone } from "react-dropzone";
 import dynamic from "next/dynamic";
-import { DragDropContext, Droppable, Draggable } from "@hello-pangea/dnd";
+
+// DND-KIT İMPORTLARI (Grid yapısı için)
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent
+} from '@dnd-kit/core';
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  rectSortingStrategy,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+
 import "react-pdf/dist/Page/TextLayer.css";
 import "react-pdf/dist/Page/AnnotationLayer.css";
 import { useSession } from "next-auth/react";
@@ -13,35 +32,59 @@ import UsageLimitModal from "@/components/UsageLimitModal";
 import { guestService } from "@/services/guestService";
 import { useLanguage } from "@/context/LanguageContext";
 import { sendRequest } from "@/utils/api";
-import { getMaxUploadBytes } from "@/app/config/fileLimits"; // ✅ Limit ayarı
+import { getMaxUploadBytes } from "@/app/config/fileLimits";
 
 const Document = dynamic(() => import("react-pdf").then(mod => mod.Document), { ssr: false });
 const Page = dynamic(() => import("react-pdf").then(mod => mod.Page), { ssr: false });
 
 type PageItem = {
-  id: string;
+  id: string; 
   pageNumber: number;
 };
+
+// Hata Kodları ENUM
+type ErrorType = "NONE" | "INVALID_TYPE" | "SIZE_EXCEEDED" | "CUSTOM" | "EMPTY_PDF" | "SELECT_PDF_FIRST" | "REORDER_ERROR" | "SAVE_ERROR" | "PANEL_ERROR";
 
 export default function EditPdfPage() {
   const { data: session, status } = useSession();
   const { pdfFile, savePdf } = usePdf();
-  const { t } = useLanguage();
+  
+  // ✅ 1. Dil Desteği
+  const { t, language } = useLanguage();
 
   const [file, setFile] = useState<File | null>(null);
   const [objectUrl, setObjectUrl] = useState<string | null>(null);
   const [numPages, setNumPages] = useState(0);
   const [pages, setPages] = useState<PageItem[]>([]);
-  const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [processedBlob, setProcessedBlob] = useState<Blob | null>(null);
   const [isProcessingDone, setIsProcessingDone] = useState(false);
 
-  // ✅ Limit Hesaplama
+  // ✅ 2. Hata State'i (Metin yerine Kod)
+  const [errorType, setErrorType] = useState<ErrorType>("NONE");
+  const [customErrorMsg, setCustomErrorMsg] = useState<string | null>(null);
+
   const isGuest = status !== "authenticated";
   const maxBytes = getMaxUploadBytes(isGuest);
 
   const { usageInfo, showLimitModal, checkLimit, closeLimitModal, redirectToLogin } = useGuestLimit();
+
+  // DND-KIT SENSÖRLERİ
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+        activationConstraint: {
+            distance: 5,
+        }
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
+
+  const clearError = () => {
+    setErrorType("NONE");
+    setCustomErrorMsg(null);
+  };
 
   const resetState = (f: File) => {
     setFile(f);
@@ -49,47 +92,68 @@ export default function EditPdfPage() {
     setObjectUrl(url);
     setPages([]);
     setNumPages(0);
-    setError(null);
+    clearError();
     setIsProcessingDone(false);
     setProcessedBlob(null);
   };
 
-  // --- DROPZONE AYARLARI ---
-  const onDrop = useCallback((acceptedFiles: File[]) => {
+  // --- DROPZONE ---
+  const onDrop = useCallback((acceptedFiles: File[], fileRejections: any[]) => {
+    clearError();
+
+    if (fileRejections.length > 0) {
+        const rejection = fileRejections[0];
+        const errorObj = rejection.errors[0];
+
+        if (errorObj.code === "file-invalid-type") {
+            setErrorType("INVALID_TYPE");
+        } else if (errorObj.code === "file-too-large") {
+            setErrorType("SIZE_EXCEEDED");
+        } else {
+            setErrorType("CUSTOM");
+            setCustomErrorMsg(errorObj.message);
+        }
+        setFile(null);
+        return;
+    }
+
     if (acceptedFiles?.length) {
       const f = acceptedFiles[0];
-      // Manuel Kontrol
+      
+      if (f.type !== "application/pdf") {
+          setFile(null);
+          setErrorType("INVALID_TYPE");
+          return;
+      }
+
       if (f.size > maxBytes) {
         setFile(null);
-        setError(`${t('fileSizeExceeded') || 'Dosya boyutu sınırı aşıldı'} (Max: ${(maxBytes / (1024 * 1024)).toFixed(0)} MB)`);
+        setErrorType("SIZE_EXCEEDED");
         return;
       }
       resetState(f);
     }
-  }, [maxBytes, t]);
+  }, [maxBytes]);
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
     multiple: false,
     accept: { "application/pdf": [".pdf"] },
-    maxSize: maxBytes, // ✅ Limit bildirildi
-    onDropRejected: (fileRejections) => {
-        const rejection = fileRejections[0];
-        if (rejection.errors[0].code === "file-too-large") {
-            setError(`${t('fileSizeExceeded') || 'Dosya boyutu sınırı aşıldı'} (Max: ${(maxBytes / (1024 * 1024)).toFixed(0)} MB)`);
-        } else {
-            setError(rejection.errors[0].message);
-        }
-        setFile(null);
-    },
+    maxSize: maxBytes,
   });
 
-  // --- YAN PANEL KONTROLÜ ---
   const handleDropFromPanel = (e?: React.DragEvent<HTMLDivElement> | React.MouseEvent<HTMLButtonElement>) => {
+    clearError();
     if (pdfFile) {
+      if (pdfFile.type !== "application/pdf") {
+          setFile(null);
+          setErrorType("INVALID_TYPE");
+          return;
+      }
+
       if (pdfFile.size > maxBytes) {
         setFile(null);
-        setError(`${t('fileSizeExceeded') || 'Dosya boyutu sınırı aşıldı'} (Max: ${(maxBytes / (1024 * 1024)).toFixed(0)} MB)`);
+        setErrorType("SIZE_EXCEEDED");
         return;
       }
       resetState(pdfFile);
@@ -98,17 +162,24 @@ export default function EditPdfPage() {
         e.preventDefault();
       }
     } else {
-      setError(t('panelPdfError'));
+      setErrorType("PANEL_ERROR");
     }
   };
 
-  // --- DOSYA SEÇ BUTONU KONTROLÜ ---
   const handleSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    clearError();
     const f = e.target.files?.[0];
     if (f) {
+      if (f.type !== "application/pdf" && !f.name.toLowerCase().endsWith(".pdf")) {
+          setFile(null);
+          setErrorType("INVALID_TYPE");
+          e.target.value = '';
+          return;
+      }
+
       if (f.size > maxBytes) {
         setFile(null);
-        setError(`${t('fileSizeExceeded') || 'Dosya boyutu sınırı aşıldı'} (Max: ${(maxBytes / (1024 * 1024)).toFixed(0)} MB)`);
+        setErrorType("SIZE_EXCEEDED");
         e.target.value = '';
         return;
       }
@@ -127,14 +198,20 @@ export default function EditPdfPage() {
     );
   };
 
-  const onDragEnd = (result: any) => {
-    if (!result.destination) return;
-    const newPages = Array.from(pages);
-    const [removed] = newPages.splice(result.source.index, 1);
-    newPages.splice(result.destination.index, 0, removed);
-    setPages(newPages);
-    setIsProcessingDone(false);
-    setProcessedBlob(null);
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+
+    if (over && active.id !== over.id) {
+      setPages((items) => {
+        const oldIndex = items.findIndex((item) => item.id === active.id);
+        const newIndex = items.findIndex((item) => item.id === over.id);
+
+        setIsProcessingDone(false);
+        setProcessedBlob(null);
+
+        return arrayMove(items, oldIndex, newIndex);
+      });
+    }
   };
 
   const handleReset = () => {
@@ -144,19 +221,18 @@ export default function EditPdfPage() {
     setNumPages(0);
     setIsProcessingDone(false);
     setProcessedBlob(null);
-    setError(null);
+    clearError();
   };
 
-  // --- 1. REORDER İŞLEMİ ---
   const handleProcessAndDownload = async () => {
     if (!file) {
-      setError(t('selectPdfFirst'));
+      setErrorType("SELECT_PDF_FIRST");
       return;
     }
     const canProceed = await checkLimit();
     if (!canProceed) return;
     
-    setError(null);
+    clearError();
     try {
       const formData = new FormData();
       formData.append("file", file);
@@ -165,7 +241,7 @@ export default function EditPdfPage() {
 
       const blob = await sendRequest("/files/reorder", "POST", formData, true);
 
-      if (blob.size === 0) throw new Error(t('emptyPdfError'));
+      if (blob.size === 0) throw new Error("EMPTY_PDF");
       
       setProcessedBlob(blob);
       setIsProcessingDone(true);
@@ -182,15 +258,19 @@ export default function EditPdfPage() {
 
     } catch (err: any) {
       console.error("Reorder Error:", err);
-      setError(t('error') + ": " + (err.message || "İşlem başarısız"));
+      // Hata kodunu kontrol et veya genel hata ver
+      if (err.message === "EMPTY_PDF") setErrorType("EMPTY_PDF");
+      else {
+          setErrorType("REORDER_ERROR");
+          setCustomErrorMsg(err.message);
+      }
     }
   };
 
-  // --- 2. KAYDETME İŞLEMİ ---
   const handleSave = async () => {
     if (!processedBlob || !session || !file) return;
     setSaving(true);
-    setError(null);
+    clearError();
     try {
       const filename = `reordered_${file.name}`;
       const fileToSave = new File([processedBlob], filename, { type: "application/pdf" });
@@ -208,7 +288,7 @@ export default function EditPdfPage() {
 
     } catch (e: any) {
       console.error("Save Error:", e);
-      setError(e?.message || t('saveError'));
+      setErrorType("SAVE_ERROR");
     } finally {
       setSaving(false);
     }
@@ -226,38 +306,46 @@ export default function EditPdfPage() {
     URL.revokeObjectURL(url);
   };
 
+  // ✅ Hata Mesajı Renderlayıcı
+  const getErrorMessage = () => {
+    if (customErrorMsg && errorType === "CUSTOM") return customErrorMsg;
+    if (customErrorMsg && errorType === "REORDER_ERROR") return `${t("error")}: ${customErrorMsg}`;
+
+    switch (errorType) {
+        case "INVALID_TYPE": return t("invalidFileType");
+        case "SIZE_EXCEEDED": return `${t("fileSizeExceeded")} (Max: ${(maxBytes / (1024 * 1024)).toFixed(0)} MB)`;
+        case "PANEL_ERROR": return t("panelPdfError");
+        case "SELECT_PDF_FIRST": return t("selectPdfFirst");
+        case "EMPTY_PDF": return t("emptyPdfError");
+        case "SAVE_ERROR": return t("saveError");
+        case "REORDER_ERROR": return t("reorderError");
+        default: return null;
+    }
+  };
+
+  const currentError = getErrorMessage();
+
+  
+
   return (
-    <main className="min-h-screen p-6 max-w-4xl mx-auto font-bold text-[var(--foreground)]">
+    <main className="min-h-screen p-6 max-w-5xl mx-auto font-bold text-[var(--foreground)]">
       <h1 className="text-3xl mb-6 tracking-tight">{t('editPageTitle')}</h1>
 
-      {/* Usage Info */}
       {usageInfo && !showLimitModal && !session && (
         <div className="info-box mb-4">
             {usageInfo.message}
         </div>
       )}
 
-      {error && (
+      {currentError && (
         <div className="error-box mb-6 shadow-sm">
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            viewBox="0 0 24 24"
-            fill="currentColor"
-            className="w-5 h-5 shrink-0"
-          >
-            <path
-              fillRule="evenodd"
-              d="M9.401 3.003c1.155-2 4.043-2 5.197 0l7.355 12.748c1.154 2-.29 4.5-2.599 4.5H4.645c-2.309 0-3.752-2.5-2.598-4.5L9.4 3.003zM12 8.25a.75.75 0 01.75.75v3.75a.75.75 0 01-1.5 0V9a.75.75 0 01.75-.75zm0 8.25a.75.75 0 100-1.5.75.75 0 000 1.5z"
-              clipRule="evenodd"
-            />
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 shrink-0">
+            <path fillRule="evenodd" d="M9.401 3.003c1.155-2 4.043-2 5.197 0l7.355 12.748c1.154 2-.29 4.5-2.599 4.5H4.645c-2.309 0-3.752-2.5-2.598-4.5L9.4 3.003zM12 8.25a.75.75 0 01.75.75v3.75a.75.75 0 01-1.5 0V9a.75.75 0 01.75-.75zm0 8.25a.75.75 0 100-1.5.75.75 0 000 1.5z" clipRule="evenodd"/>
           </svg>
-
-          <span>{error}</span>
+          <span>{currentError}</span>
         </div>
       )}
 
-
-      {/* Dropzone */}
       <div
         {...getRootProps()}
         onDrop={handleDropFromPanel}
@@ -267,7 +355,7 @@ export default function EditPdfPage() {
             : "border-[var(--navbar-border)] hover:border-[var(--button-bg)]"
           }`}
       >
-        <input {...getInputProps()} />
+        <input {...getInputProps()} accept="application/pdf" />
         <div className="flex flex-col items-center gap-3">
              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-12 h-12 opacity-50">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 6h9.75M10.5 6a1.5 1.5 0 11-3 0m3 0a1.5 1.5 0 10-3 0M3.75 6H7.5m3 12h9.75m-9.75 0a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m-3.75 0H7.5m9-6h3.75m-3.75 0a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m-9.75 0h9.75" />
@@ -276,7 +364,6 @@ export default function EditPdfPage() {
         </div>
       </div>
 
-      {/* Butonlar */}
       <div className="mt-6 flex flex-wrap items-center gap-4">
         <label className="btn-primary cursor-pointer shadow-md hover:scale-105 flex items-center gap-2">
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
@@ -292,7 +379,6 @@ export default function EditPdfPage() {
           <div className="mt-8">
             <h3 className="text-xl font-semibold mb-4 opacity-90">{t('previewDragDrop')} ({pages.length} {t('page')})</h3>
             
-            {/* Document Bileşeni */}
             <Document
               file={objectUrl}
               onLoadSuccess={handleLoadSuccess}
@@ -300,61 +386,22 @@ export default function EditPdfPage() {
               error={<div className="p-6 text-red-500">{t('pdfError')}</div>}
               className="flex justify-center"
             >
-              <DragDropContext onDragEnd={onDragEnd}>
-                <Droppable droppableId="pages" direction="vertical">
-                  {(provided: any) => (
-                    <div
-                      ref={provided.innerRef}
-                      {...provided.droppableProps}
-                      className="flex flex-col gap-6 p-4 items-center w-full"
-                    >
-                      {pages.map((p, index) => (
-                        <Draggable key={p.id} draggableId={p.id} index={index}>
-                          {(provided: any) => (
-                            <div
-                              ref={provided.innerRef}
-                              {...provided.draggableProps}
-                              {...provided.dragHandleProps}
-                              // KART STİLİ
-                              className="border rounded-xl overflow-hidden shadow-lg cursor-move transition-shadow hover:shadow-2xl"
-                              style={{ 
-                                width: "100%", 
-                                maxWidth: 300, 
-                                backgroundColor: 'var(--container-bg)', 
-                                borderColor: 'var(--container-border)',
-                                color: 'var(--foreground)',
-                                ...provided.draggableProps.style 
-                              }}
-                            >
-                              {/* KART BAŞLIĞI */}
-                              <div 
-                                className="text-center text-sm py-2 border-b font-bold tracking-wide"
-                                style={{ 
-                                    backgroundColor: 'var(--background)',
-                                    borderColor: 'var(--navbar-border)'
-                                }}
-                              >
-                                {t('orderIndex')}: {index + 1} ({t('origPage')} {p.pageNumber})
-                              </div>
-                              
-                              <div className="flex justify-center bg-gray-200 dark:bg-gray-800 p-2">
-                                <Page
-                                    pageNumber={p.pageNumber}
-                                    width={250}
-                                    renderTextLayer={false}
-                                    renderAnnotationLayer={false}
-                                    className="shadow-sm"
-                                />
-                              </div>
-                            </div>
-                          )}
-                        </Draggable>
-                      ))}
-                      {provided.placeholder}
+              <DndContext
+                sensors={sensors}
+                collisionDetection={closestCenter}
+                onDragEnd={handleDragEnd}
+              >
+                <SortableContext 
+                    items={pages.map(p => p.id)} 
+                    strategy={rectSortingStrategy}
+                >
+                    <div className="flex flex-wrap gap-4 p-4 justify-start w-full">
+                        {pages.map((p, index) => (
+                            <SortablePageItem key={p.id} id={p.id} pageNumber={p.pageNumber} index={index} t={t} />
+                        ))}
                     </div>
-                  )}
-                </Droppable>
-              </DragDropContext>
+                </SortableContext>
+              </DndContext>
             </Document>
           </div>
 
@@ -393,59 +440,83 @@ export default function EditPdfPage() {
             </h3>
             
             <div className="flex gap-4 flex-wrap">
-              <button
-                onClick={handleDownload}
-                className="btn-primary shadow-md hover:scale-105 flex items-center gap-2"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M12 12.75l-3-3m0 0l3-3m-3 3h7.5" />
-                </svg>
+              <button onClick={handleDownload} className="btn-primary shadow-md hover:scale-105 flex items-center gap-2">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M12 12.75l-3-3m0 0l3-3m-3 3h7.5" /></svg>
                 {t('download')}
               </button>
-
               {session && (
-                <button
-                  onClick={handleSave}
-                  disabled={saving}
-                  className="btn-primary shadow-md hover:scale-105 disabled:opacity-50 flex items-center gap-2"
-                >
-                  {saving ? (
-                    <svg className="animate-spin -ml-1 mr-2 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                    </svg>
-                  ) : (
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 16.5V9.75m0 0l3 3m-3-3l-3 3M6.75 19.5a4.5 4.5 0 01-1.41-8.775 5.25 5.25 0 0110.233-2.33 3 3 0 013.758 3.848A3.752 3.752 0 0118 19.5H6.75z" />
-                    </svg>
-                  )}
-                  {saving ? t('saving') : t('saveToFiles')}
+                <button onClick={handleSave} disabled={saving} className="btn-primary shadow-md hover:scale-105 disabled:opacity-50 flex items-center gap-2">
+                   {saving ? t('saving') : t('saveToFiles')}
                 </button>
               )}
-
-              <button
-                onClick={handleReset}
-                className="btn-primary shadow-md hover:scale-105 flex items-center gap-2"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
-                </svg>
+              <button onClick={handleReset} className="btn-primary shadow-md hover:scale-105 flex items-center gap-2">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" /></svg>
                 {t('newProcess')}
               </button>
             </div>
-
             {!session && <p className="mt-4 text-sm opacity-80">💡 <a href="/login" className="underline font-bold" style={{ color: 'var(--button-bg)' }}>{t('loginWarning')}</a></p>}
           </div>
         </div>
       )}
 
-      <UsageLimitModal
-        isOpen={showLimitModal}
-        onClose={closeLimitModal}
-        onLogin={redirectToLogin}
-        usageCount={usageInfo?.usage_count}
-        maxUsage={3}
-      />
+      <UsageLimitModal isOpen={showLimitModal} onClose={closeLimitModal} onLogin={redirectToLogin} usageCount={usageInfo?.usage_count} maxUsage={3} />
     </main>
+  );
+}
+
+function SortablePageItem({ id, pageNumber, index, t }: { id: string, pageNumber: number, index: number, t: any }) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging
+  } = useSortable({ id: id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    zIndex: isDragging ? 50 : "auto", 
+    opacity: isDragging ? 0.8 : 1,    
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      {...attributes}
+      {...listeners}
+      className="border rounded-xl overflow-hidden shadow-lg cursor-move transition-shadow hover:shadow-2xl flex-shrink-0 touch-none" 
+    >
+      <div 
+        className="w-[190px]"
+        style={{ 
+           backgroundColor: 'var(--container-bg)', 
+           borderColor: 'var(--container-border)',
+           color: 'var(--foreground)',
+        }}
+      >
+        <div 
+            className="text-center text-xs py-2 border-b font-bold tracking-wide truncate px-1 select-none"
+            style={{ 
+                backgroundColor: 'var(--background)',
+                borderColor: 'var(--navbar-border)'
+            }}
+        >
+            {t('orderIndex')}: {index + 1} ({t('origPage')} {pageNumber})
+        </div>
+        
+        <div className="flex justify-center bg-gray-200 dark:bg-gray-800 p-2 h-[240px] items-center overflow-hidden">
+            <Page
+                pageNumber={pageNumber}
+                width={170} 
+                renderTextLayer={false}
+                renderAnnotationLayer={false}
+                className="shadow-sm pointer-events-none select-none" 
+            />
+        </div>
+      </div>
+    </div>
   );
 }

@@ -8,24 +8,25 @@ import AuthBar from "@/components/AuthBar";
 import LanguageSwitcher from "@/components/LanguageSwitcher";
 import ThemeToggle from "@/components/ThemeToggle";
 import { useLanguage } from "@/context/LanguageContext";
-import NeuroLogo from "@/components/NeuroLogo"; // ✅ Özel Logo Bileşeni
+// import NeuroLogo from "@/components/NeuroLogo"; // Logo bileşeni varsa açabilirsiniz
 
-// ✅ EKSİK DOSYALAR YERİNE LUCIDE ICONLARI
-import { 
-  UploadCloud, 
-  Merge, 
-  FileType2, 
-  Scissors, 
-  FilePenLine, 
+// ✅ Lucide iconları
+import {
+  UploadCloud,
+  Merge,
+  Scissors,
+  FilePenLine,
   FileText,
+  Crown,
   Menu,
-  X 
+  X,
 } from "lucide-react";
 
 type NavLink = {
   href: string;
   label: string;
-  Icon?: React.ElementType; // Lucide ikonları için tip güncellemesi
+  Icon?: React.ElementType;
+  variant?: "default" | "pro";
 };
 
 export default function NavBar() {
@@ -33,14 +34,31 @@ export default function NavBar() {
   const { t } = useLanguage();
   const [open, setOpen] = useState(false);
 
-  // ✅ İkon eşleştirmeleri
+  // ✅ İSTENEN NAVBAR SIRASI:
+  // pdfpreview - extract - edit - merge - summarize - pro(taç)
   const links: NavLink[] = [
-    { href: "/upload", label: t("navUpload"), Icon: UploadCloud },
-    { href: "/merge-pdf", label: t("navMerge"), Icon: Merge },
-    { href: "/convert-pdf", label: t("navConvert"), Icon: FileType2 },
-    { href: "/extract-pdf", label: t("navExtract"), Icon: Scissors },
-    { href: "/edit-pdf", label: t("navEdit"), Icon: FilePenLine },
-    { href: "/summarize-pdf", label: t("navSummarize"), Icon: FileText },
+    // 1. PDF Preview (Upload)
+    { href: "/upload", label: t("navUpload") || "Yükle", Icon: UploadCloud },
+
+    // 2. Extract Pages
+    { href: "/extract-pdf", label: t("navExtract") || "Ayıkla", Icon: Scissors },
+
+    // 3. Edit Pages
+    { href: "/edit-pdf", label: t("navEdit") || "Düzenle", Icon: FilePenLine },
+
+    // 4. Merge PDFs
+    { href: "/merge-pdf", label: t("navMerge") || "Birleştir", Icon: Merge },
+
+    // 5. Summarize PDF
+    { href: "/summarize-pdf", label: t("navSummarize") || "Özetle", Icon: FileText },
+
+    // 6. PRO (Taç İkonlu)
+    { 
+      href: "/pricing", 
+      label: "Pro", 
+      Icon: Crown, 
+      variant: "pro" 
+    },
   ];
 
   const isActive = (href: string) =>
@@ -49,9 +67,9 @@ export default function NavBar() {
   return (
     <header
       className="sticky top-0 z-50 backdrop-blur-md transition-colors duration-300 border-b shadow-sm"
-      style={{ 
+      style={{
         borderColor: "var(--navbar-border)",
-        backgroundColor: "rgba(var(--background-rgb), 0.8)" // Hafif transparanlık için
+        backgroundColor: "rgba(var(--background-rgb), 0.8)",
       }}
     >
       <div className="w-full px-4 sm:px-6 lg:px-8">
@@ -64,11 +82,6 @@ export default function NavBar() {
               className="font-extrabold text-xl sm:text-2xl tracking-tight hover:opacity-80 transition-opacity flex items-center gap-2"
               style={{ color: "var(--foreground)" }}
             >
-              {/* ✅ Logo Bileşeni Kullanımı
-              <span className="inline-flex items-center justify-center h-10 w-10 sm:h-12 sm:w-12 shrink-0">
-                <NeuroLogo className="h-full w-full" />
-              </span> */}
-
               <span className="bg-clip-text text-transparent bg-gradient-to-r from-red-600 to-orange-600">
                 Neuro
               </span>
@@ -77,23 +90,47 @@ export default function NavBar() {
           </div>
 
           {/* --- ORTA: DESKTOP MENU --- */}
-          <nav className="hidden lg:flex items-center gap-2 text-sm">
+          <nav className="hidden lg:flex items-center gap-1 xl:gap-2 text-sm">
             {links.map((l) => {
               const Icon = l.Icon;
+              const active = isActive(l.href);
+              const isPro = l.variant === "pro";
+              // ✅ Summarize linkini kontrol et
+              const isSummarize = l.href === "/summarize-pdf";
+
               return (
                 <Link
                   key={l.href}
                   href={l.href}
-                  className={`px-3 py-2 rounded-lg font-medium transition-all duration-200 border border-transparent whitespace-nowrap flex items-center gap-2
-                    ${
-                      isActive(l.href)
-                        ? "bg-[var(--button-bg)] text-[var(--button-text)] shadow-md"
-                        : "text-[var(--foreground)] hover:bg-[var(--container-bg)] opacity-70 hover:opacity-100"
-                    }`}
+                  className={[
+                    "px-3 py-2 rounded-lg font-medium transition-all duration-200 border border-transparent whitespace-nowrap flex items-center gap-2",
+                    active
+                      ? "bg-[var(--button-bg)] text-[var(--button-text)] shadow-md"
+                      : "text-[var(--foreground)] hover:bg-[var(--container-bg)] opacity-70 hover:opacity-100",
+                    isPro 
+                      ? "bg-gradient-to-r from-yellow-400/20 to-orange-400/20 text-orange-600 dark:text-yellow-400 ring-1 ring-orange-400/50 hover:from-yellow-400/30 hover:to-orange-400/30 !opacity-100" 
+                      : "",
+                    isSummarize && !active
+                      ? [
+                          "!border-[var(--summarize-border-light)]",
+                          "text-[var(--summarize-text-light)]",
+                          "hover:bg-[var(--summarize-hover-bg-light)]",
+                          "dark:!border-amber-400",
+                          "dark:text-yellow-400",
+                          "!opacity-100"
+                        ].join(" ")
+                      : ""
+                  ].join(" ")}   // ✅ FIX
                 >
                   {Icon && (
                     <Icon
-                      className="w-4 h-4 opacity-90"
+                      className={[
+                        "w-4 h-4",
+                        active ? "opacity-100" : "opacity-70",
+                        isPro ? "text-orange-500 dark:text-yellow-400 w-5 h-5" : "",
+                        // ✅ Summarize ikonu rengi
+                        isSummarize && !active ? "!opacity-100 text-yellow-600 dark:text-yellow-500" : ""
+                      ].join(" ")}
                       aria-hidden="true"
                     />
                   )}
@@ -121,11 +158,7 @@ export default function NavBar() {
               aria-label={open ? "Menüyü kapat" : "Menüyü aç"}
               type="button"
             >
-              {open ? (
-                <X className="w-7 h-7" />
-              ) : (
-                <Menu className="w-7 h-7" />
-              )}
+              {open ? <X className="w-7 h-7" /> : <Menu className="w-7 h-7" />}
             </button>
           </div>
         </div>
@@ -139,21 +172,40 @@ export default function NavBar() {
             <nav className="flex flex-col gap-2">
               {links.map((l) => {
                 const Icon = l.Icon;
+                const active = isActive(l.href);
+                const isPro = l.variant === "pro";
+                 // ✅ Summarize linkini kontrol et
+                const isSummarize = l.href === "/summarize-pdf";
+
                 return (
                   <Link
                     key={l.href}
                     href={l.href}
                     onClick={() => setOpen(false)}
-                    className={`px-4 py-3 rounded-xl font-medium transition-all duration-200 flex items-center gap-3
-                      ${
-                        isActive(l.href)
-                          ? "bg-[var(--button-bg)] text-[var(--button-text)] shadow-sm"
-                          : "text-[var(--foreground)] hover:bg-[var(--container-bg)]"
-                      }`}
+                    className={[
+                      // ✅ border sınıfı eklendi
+                      "px-4 py-3 rounded-xl font-medium transition-all duration-200 flex items-center gap-3 border",
+                      active
+                        ? "bg-[var(--button-bg)] text-[var(--button-text)] shadow-sm border-transparent"
+                        : "text-[var(--foreground)] hover:bg-[var(--container-bg)] border-transparent",
+                      isPro 
+                        ? "bg-gradient-to-r from-yellow-400/10 to-orange-400/10 text-orange-600 dark:text-yellow-400 !border-orange-200 dark:!border-yellow-900" 
+                        : "",
+                       // ✅ Summarize Altın Çerçeve (Mobil)
+                      isSummarize && !active
+                        ? "!border-yellow-500 dark:!border-amber-400 text-yellow-700 dark:text-yellow-400 bg-yellow-50/50 dark:bg-transparent"
+                        : ""
+                    ].join(" ")}
                   >
                     {Icon && (
                       <Icon
-                        className="w-5 h-5 opacity-90"
+                        className={[
+                          "w-5 h-5",
+                          active ? "opacity-100" : "opacity-70",
+                          isPro ? "text-orange-500 dark:text-yellow-400" : "",
+                           // ✅ Summarize ikonu rengi (Mobil)
+                          isSummarize && !active ? "!opacity-100 text-yellow-600 dark:text-yellow-500" : ""
+                        ].join(" ")}
                         aria-hidden="true"
                       />
                     )}

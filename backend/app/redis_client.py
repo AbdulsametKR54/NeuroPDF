@@ -1,6 +1,9 @@
 # app/redis_client.py
 import redis
+import logging
 from .config import settings
+
+logger = logging.getLogger(__name__)
 
 redis_client = None
 
@@ -20,16 +23,16 @@ try:
     
     # Bağlantıyı test et
     redis_client.ping()
-    print("✅ Redis connection successful!")
-    print(f"✅ Redis info: {settings.REDIS_HOST}:{settings.REDIS_PORT}")
+    logger.info("Redis connection successful!")
+    logger.info(f"Redis info: {settings.REDIS_HOST}:{settings.REDIS_PORT}")
     
 except redis.exceptions.ConnectionError as e:
-    print(f"❌ Redis connection failed: {e}")
-    print(f"❌ Trying to connect to: {settings.REDIS_HOST}:{settings.REDIS_PORT}")
-    print("⚠️  Guest user limiting will be disabled")
+    logger.warning(f"Redis connection failed: {e}")
+    logger.warning(f"Trying to connect to: {settings.REDIS_HOST}:{settings.REDIS_PORT}")
+    logger.warning("Guest user limiting will be disabled")
     redis_client = None
 except Exception as e:
-    print(f"❌ Redis error: {e}")
+    logger.error(f"Redis error: {e}", exc_info=True)
     redis_client = None
 
 
@@ -46,14 +49,14 @@ def test_redis_connection():
     if redis_client:
         try:
             info = redis_client.info()
-            print(f"✅ Redis version: {info.get('redis_version')}")
-            print(f"✅ Connected clients: {info.get('connected_clients')}")
+            logger.info(f"Redis version: {info.get('redis_version')}")
+            logger.info(f"Connected clients: {info.get('connected_clients')}")
             return True
         except Exception as e:
-            print(f"❌ Redis test failed: {e}")
+            logger.error(f"Redis test failed: {e}", exc_info=True)
             return False
     else:
-        print("❌ Redis client not initialized")
+        logger.warning("Redis client not initialized")
         return False
 
 

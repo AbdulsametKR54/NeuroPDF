@@ -16,6 +16,9 @@ import PdfChatPanel from "@/components/PdfChatPanel";
 const PdfViewer = dynamic(() => import("@/components/PdfViewer"), { ssr: false });
 const MarkdownViewer = dynamic(() => import("@/components/MarkdownViewer"), { ssr: false });
 
+// Helper: Hata Kodları için ENUM
+type ErrorType = "NONE" | "INVALID_TYPE" | "SIZE_EXCEEDED" | "CUSTOM" | "UPLOAD_FIRST" | "PANEL_ERROR" | "SUMMARY_ERROR" | "AUDIO_ERROR" | "PDF_GEN_ERROR";
+
 const formatTime = (seconds: number) => {
   if (!seconds || isNaN(seconds)) return "00:00";
   const mins = Math.floor(seconds / 60);
@@ -26,32 +29,44 @@ const formatTime = (seconds: number) => {
 export default function SummarizePdfPage() {
   const { data: session, status } = useSession();
   const { pdfFile } = usePdf();
-  const { t } = useLanguage();
+  
+  // ✅ 1. Dil desteği için t() ve language alındı
+  const { t, language } = useLanguage();
 
   const [file, setFile] = useState<File | null>(null);
   const [summary, setSummary] = useState<string>("");
   const [summarizing, setSummarizing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  
+  // ✅ 2. Hata state'i (Metin yerine Kod)
+  const [errorType, setErrorType] = useState<ErrorType>("NONE");
+  const [customErrorMsg, setCustomErrorMsg] = useState<string | null>(null);
 
   // Chat State
   const [showChat, setShowChat] = useState(false);
 
   // Audio State
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [audioLoading, setAudioLoading] = useState(false); 
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
-  // ✅ Limit Hesaplama
+  // Limit Hesaplama
   const isGuest = status !== "authenticated";
   const maxBytes = getMaxUploadBytes(isGuest);
 
   const { usageInfo, showLimitModal, checkLimit, closeLimitModal, redirectToLogin } = useGuestLimit();
 
+  const clearError = () => {
+    setErrorType("NONE");
+    setCustomErrorMsg(null);
+  };
+
   const resetAudio = () => {
     setAudioUrl(null);
+    setAudioBlob(null);
     setIsPlaying(false);
     setCurrentTime(0);
     setDuration(0);
@@ -60,46 +75,69 @@ export default function SummarizePdfPage() {
   const resetState = (f: File) => {
       setFile(f);
       setSummary("");
-      setError(null);
+      clearError();
       resetAudio();
       setShowChat(false);
   };
 
   // --- DROPZONE AYARLARI ---
-  const onDrop = useCallback((acceptedFiles: File[]) => {
+  const onDrop = useCallback((acceptedFiles: File[], fileRejections: any[]) => {
+    clearError();
+
+    // Hata Kontrolü
+    if (fileRejections.length > 0) {
+        const rejection = fileRejections[0];
+        const errorObj = rejection.errors[0];
+
+        if (errorObj.code === "file-invalid-type") {
+            setErrorType("INVALID_TYPE");
+        } else if (errorObj.code === "file-too-large") {
+            setErrorType("SIZE_EXCEEDED");
+        } else {
+            setErrorType("CUSTOM");
+            setCustomErrorMsg(errorObj.message);
+        }
+        setFile(null);
+        return;
+    }
+
     if (acceptedFiles?.length) {
       const f = acceptedFiles[0];
+      
+      if (f.type !== "application/pdf") {
+          setFile(null);
+          setErrorType("INVALID_TYPE");
+          return;
+      }
+
       if (f.size > maxBytes) {
         setFile(null);
-        setError(`${t('fileSizeExceeded') || 'Dosya boyutu sınırı aşıldı'} (Max: ${(maxBytes / (1024 * 1024)).toFixed(0)} MB)`);
+        setErrorType("SIZE_EXCEEDED");
         return;
       }
       resetState(f);
     }
-  }, [maxBytes, t]);
+  }, [maxBytes]); // t bağımlılığına gerek yok
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
     multiple: false,
     accept: { "application/pdf": [".pdf"] },
     maxSize: maxBytes,
-    onDropRejected: (fileRejections) => {
-        const rejection = fileRejections[0];
-        if (rejection.errors[0].code === "file-too-large") {
-            setError(`${t('fileSizeExceeded') || 'Dosya boyutu sınırı aşıldı'} (Max: ${(maxBytes / (1024 * 1024)).toFixed(0)} MB)`);
-        } else {
-            setError(rejection.errors[0].message);
-        }
-        setFile(null);
-    },
   });
 
-  // --- YAN PANEL KONTROLÜ ---
   const handleDropFromPanel = (e?: React.DragEvent<HTMLDivElement> | React.MouseEvent) => {
+    clearError();
     if (pdfFile) {
+        if (pdfFile.type !== "application/pdf") {
+             setFile(null);
+             setErrorType("INVALID_TYPE");
+             return;
+        }
+
       if (pdfFile.size > maxBytes) {
         setFile(null);
-        setError(`${t('fileSizeExceeded') || 'Dosya boyutu sınırı aşıldı'} (Max: ${(maxBytes / (1024 * 1024)).toFixed(0)} MB)`);
+        setErrorType("SIZE_EXCEEDED");
         return;
       }
       resetState(pdfFile);
@@ -108,17 +146,24 @@ export default function SummarizePdfPage() {
         e.preventDefault();
       }
     } else {
-      setError(t('panelPdfError') || "Aktif bir PDF bulunamadı.");
+      setErrorType("PANEL_ERROR");
     }
   };
 
-  // --- DOSYA SEÇ BUTONU KONTROLÜ ---
   const handleSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    clearError();
     const f = e.target.files?.[0];
     if (f) {
+      if (f.type !== "application/pdf" && !f.name.toLowerCase().endsWith(".pdf")) {
+           setFile(null);
+           setErrorType("INVALID_TYPE");
+           e.target.value = '';
+           return;
+      }  
+
       if (f.size > maxBytes) {
         setFile(null);
-        setError(`${t('fileSizeExceeded') || 'Dosya boyutu sınırı aşıldı'} (Max: ${(maxBytes / (1024 * 1024)).toFixed(0)} MB)`);
+        setErrorType("SIZE_EXCEEDED");
         e.target.value = '';
         return;
       }
@@ -130,14 +175,14 @@ export default function SummarizePdfPage() {
   // --- ÖZETLEME İŞLEMİ ---
   const handleSummarize = async () => {
     if (!file) {
-      setError(t('uploadFirst') || "Lütfen önce bir dosya yükleyin.");
+      setErrorType("UPLOAD_FIRST");
       return;
     }
     if (!session) {
       const canProceed = await checkLimit();
       if (!canProceed) return;
     }
-    setError(null);
+    clearError();
     setSummarizing(true);
     resetAudio();
 
@@ -157,7 +202,7 @@ export default function SummarizePdfPage() {
       }
     } catch (e: any) {
       console.error("PDF Özetleme Hatası:", e);
-      setError(e?.message || t('error') || "Bir hata oluştu.");
+      setErrorType("SUMMARY_ERROR"); // Genel özet hatası
     } finally {
       setSummarizing(false);
     }
@@ -168,23 +213,38 @@ export default function SummarizePdfPage() {
     if (!summary) return;
     if (audioUrl) { togglePlay(); return; }
     setAudioLoading(true);
-    setError(null);
+    clearError();
     try {
-        const audioBlob = await sendRequest("/files/listen-summary", "POST", { text: summary });
-        if (!(audioBlob instanceof Blob)) throw new Error("Ses verisi alınamadı.");
-        const objectUrl = window.URL.createObjectURL(audioBlob);
+        const resultBlob = await sendRequest("/files/listen-summary", "POST", { text: summary });
+        if (!(resultBlob instanceof Blob)) throw new Error("Ses verisi alınamadı.");
+        
+        setAudioBlob(resultBlob);
+        const objectUrl = window.URL.createObjectURL(resultBlob);
         setAudioUrl(objectUrl);
     } catch (e: any) {
-        setError("Seslendirme servisine ulaşılamadı.");
+        setErrorType("AUDIO_ERROR");
     } finally {
         setAudioLoading(false);
     }
   };
 
+  // Ses İndirme
+  const handleDownloadAudio = () => {
+    if (!audioBlob) return;
+    const url = window.URL.createObjectURL(audioBlob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = "ozet-seslendirme.mp3";
+    document.body.appendChild(a);
+    a.click();
+    window.URL.revokeObjectURL(url);
+    document.body.removeChild(a);
+  };
+
   // --- PDF İNDİRME ---
   const handleDownloadPdf = async () => {
     if (!summary) return;
-    setError(null);
+    clearError();
     try {
       const blob = await sendRequest("/files/markdown-to-pdf", "POST", { markdown: summary });
       if (!(blob instanceof Blob)) throw new Error("PDF oluşturulamadı.");
@@ -197,7 +257,7 @@ export default function SummarizePdfPage() {
       window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
     } catch (e: any) {
-      setError(e?.message || 'Hata oluştu');
+      setErrorType("PDF_GEN_ERROR");
     }
   };
 
@@ -222,9 +282,29 @@ export default function SummarizePdfPage() {
     setFile(null);
     setSummary("");
     resetAudio();
-    setError(null);
+    clearError();
     setShowChat(false);
   };
+
+  // ✅ Hata Mesajı Renderlayıcı
+  const getErrorMessage = () => {
+    if (customErrorMsg) return customErrorMsg;
+
+    switch (errorType) {
+        case "INVALID_TYPE": return t("invalidFileType");
+        case "SIZE_EXCEEDED": return `${t("fileSizeExceeded")} (Max: ${(maxBytes / (1024 * 1024)).toFixed(0)} MB)`;
+        case "PANEL_ERROR": return t("panelPdfError");
+        case "UPLOAD_FIRST": return t("uploadFirst");
+        case "SUMMARY_ERROR": return t("summarizeFailed");
+        case "AUDIO_ERROR": return "Seslendirme servisine ulaşılamadı."; // Bunu da dile ekleyebilirsiniz
+        case "PDF_GEN_ERROR": return "PDF oluşturulurken hata meydana geldi.";
+        default: return null;
+    }
+  };
+
+  const currentError = getErrorMessage();
+
+  
 
   return (
     <main className="min-h-screen p-6 max-w-4xl mx-auto font-bold text-[var(--foreground)] relative">
@@ -278,7 +358,7 @@ export default function SummarizePdfPage() {
             : "border-[var(--navbar-border)] hover:border-[var(--button-bg)]"
           }`}
       >
-        <input {...getInputProps()} />
+        <input {...getInputProps()} accept="application/pdf" />
         <div className="flex flex-col items-center gap-3">
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-12 h-12 opacity-50">
             <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
@@ -318,7 +398,7 @@ export default function SummarizePdfPage() {
                 className="btn-primary w-full sm:w-auto px-8 py-3 shadow-lg hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456zM16.894 20.567L16.5 21.75l-.394-1.183a2.25 2.25 0 00-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 001.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 001.423 1.423l1.183.394-1.183.394a2.25 2.25 0 00-1.423 1.423z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456zM16.894 20.567L16.5 21.75l-.394-1.183a2.25 2.25 0 00-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 001.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 00-1.423 1.423z" />
                 </svg>
                 {t('summarizeButton') || "Özetle"}
             </button>
@@ -345,7 +425,6 @@ export default function SummarizePdfPage() {
             {/* BUTON GRUBU */}
             <div className="flex gap-4 flex-wrap items-center mt-4 pb-2">
                 
-                {/* ✅ PDF İNDİR BUTONU (İKONLU) */}
                 <button 
                   onClick={handleDownloadPdf} 
                   className="btn-primary flex items-center gap-2 shadow-md hover:scale-105"
@@ -388,7 +467,6 @@ export default function SummarizePdfPage() {
                   </button>
                 )}
                 
-                {/* ✅ YENİ İŞLEM BUTONU (İKONLU) */}
                 <button 
                   onClick={handleNew} 
                   className="btn-primary flex items-center gap-2 shadow-md hover:scale-105"
@@ -400,43 +478,48 @@ export default function SummarizePdfPage() {
                 </button>
             </div>
 
+            {/* OYNATICI ALANI */}
             {audioUrl && (
-                <div className="bg-[var(--background)] p-4 rounded-xl border border-[var(--navbar-border)] animate-in fade-in slide-in-from-top-4 duration-500">
+                <div className="bg-[var(--background)] p-4 rounded-xl border border-[var(--navbar-border)] animate-in fade-in slide-in-from-top-4 duration-500 relative">
+                    {/* Time Line */}
                     <div className="flex items-center gap-3 mb-2">
                         <span className="text-xs font-mono opacity-70 w-10 text-right">{formatTime(currentTime)}</span>
                         <input type="range" min="0" max={duration || 0} value={currentTime} onChange={handleSeek} className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700 accent-[var(--button-bg)]" />
                         <span className="text-xs font-mono opacity-70 w-10">{formatTime(duration)}</span>
                     </div>
+                    {/* Kontroller */}
                     <div className="flex justify-center items-center gap-6">
                         <button onClick={() => skipTime(-10)} className="p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-full transition"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" /></svg></button>
                         <button onClick={togglePlay} className="w-12 h-12 flex items-center justify-center rounded-full bg-[var(--button-bg)] text-white hover:scale-110 transition shadow-lg">{isPlaying ? <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 5.25v13.5m-7.5-13.5v13.5" /></svg> : <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6 ml-1"><path strokeLinecap="round" strokeLinejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z" /></svg>}</button>
                         <button onClick={() => skipTime(10)} className="p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-full transition"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg></button>
                     </div>
+
+                    {/* İNDİRME BUTONU */}
+                    {session && audioBlob && (
+                      <button 
+                        onClick={handleDownloadAudio}
+                        title={t('downloadAudio') || "Sesi İndir (MP3)"}
+                        className="absolute bottom-4 right-4 text-gray-400 hover:text-[var(--button-bg)] hover:bg-gray-100 dark:hover:bg-gray-700 p-2 rounded-full transition-all"
+                      >
+                          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M12 12.75l-3-3m0 0 3-3m-3 3h7.5" />
+                          </svg>
+                      </button>
+                    )}
                 </div>
             )}
           </div>
         </div>
       )}
 
-      {error && (
+      {currentError && (
         <div className="error-box mt-6 shadow-sm">
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            viewBox="0 0 24 24"
-            fill="currentColor"
-            className="w-6 h-6 shrink-0"
-          >
-            <path
-              fillRule="evenodd"
-              d="M9.401 3.003c1.155-2 4.043-2 5.197 0l7.355 12.748c1.154 2-.29 4.5-2.599 4.5H4.645c-2.309 0-3.752-2.5-2.598-4.5L9.4 3.003zM12 8.25a.75.75 0 01.75.75v3.75a.75.75 0 01-1.5 0V9a.75.75 0 01.75-.75zm0 8.25a.75.75 0 100-1.5.75.75 0 000 1.5z"
-              clipRule="evenodd"
-            />
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-6 h-6 shrink-0">
+            <path fillRule="evenodd" d="M9.401 3.003c1.155-2 4.043-2 5.197 0l7.355 12.748c1.154 2-.29 4.5-2.599 4.5H4.645c-2.309 0-3.752-2.5-2.598-4.5L9.4 3.003zM12 8.25a.75.75 0 01.75.75v3.75a.75.75 0 01-1.5 0V9a.75.75 0 01.75-.75zm0 8.25a.75.75 0 100-1.5.75.75 0 000 1.5z" clipRule="evenodd" />
           </svg>
-
-          <span>{error}</span>
+          <span>{currentError}</span>
         </div>
       )}
-
 
       <UsageLimitModal isOpen={showLimitModal} onClose={closeLimitModal} onLogin={redirectToLogin} usageCount={usageInfo?.usage_count} maxUsage={3} />
 
