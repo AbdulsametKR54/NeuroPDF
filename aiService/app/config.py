@@ -8,6 +8,8 @@ class Settings(BaseSettings):
     
     # Redis (Celery kuyruğu için şart - Docker'da "redis://redis_cache:6379" olur)
     REDIS_URL: str = "redis://localhost:6379"
+    # API Key for internal service authentication (optional, defaults to empty = no auth in dev)
+    AI_SERVICE_API_KEY: str = ""
 
     # --- Opsiyonel Alanlar (Boş bırakılabilir) ---
     
