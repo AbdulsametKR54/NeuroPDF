@@ -41,4 +41,3 @@ def check_rate_limit(request: Request, key: str, limit: int, window: int = 60) -
         logger = logging.getLogger(__name__)
         logger.warning(f"Rate limit check failed: {e}")
         return True
-

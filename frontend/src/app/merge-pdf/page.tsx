@@ -18,40 +18,83 @@ const PdfViewer = dynamic(() => import("@/components/PdfViewer"), { ssr: false }
 const MAX_TOTAL_SIZE_MB = 50;
 const MAX_TOTAL_BYTES = MAX_TOTAL_SIZE_MB * 1024 * 1024;
 
+// ✅ Hata Kodları (INVALID_TYPE eklendi)
+type ErrorType = "NONE" | "INVALID_TYPE" | "SIZE_EXCEEDED" | "TOTAL_SIZE_EXCEEDED" | "CUSTOM" | "MERGE_MIN_FILES" | "PANEL_ERROR" | "FILE_ALREADY_IN_LIST" | "MERGE_ERROR" | "SAVE_ERROR";
+
 export default function MergePdfPage() {
   const { data: session, status } = useSession();
-  const { t } = useLanguage();
+  const { t, language } = useLanguage(); 
   const { pdfFile, savePdf } = usePdf();
   
   const [files, setFiles] = useState<File[]>([]);
   const [processedBlob, setProcessedBlob] = useState<Blob | null>(null);
   const [merging, setMerging] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  
+  const [errorType, setErrorType] = useState<ErrorType>("NONE");
+  const [customErrorMsg, setCustomErrorMsg] = useState<string | null>(null);
 
-  // ✅ Limit Hesaplama
   const isGuest = status !== "authenticated";
   const maxBytesPerFile = getMaxUploadBytes(isGuest);
 
   const { usageInfo, showLimitModal, checkLimit, closeLimitModal, redirectToLogin } = useGuestLimit();
 
-  const onDrop = useCallback((acceptedFiles: File[]) => {
+  const clearError = () => {
+    setErrorType("NONE");
+    setCustomErrorMsg(null);
+  };
+
+  const clearFiles = () => {
+    setFiles([]);
+    setProcessedBlob(null);
+    clearError();
+  };
+
+  const removeFile = (index: number) => {
+    setFiles(prev => prev.filter((_, i) => i !== index));
+  };
+
+  // --- DROPZONE AYARLARI ---
+  const onDrop = useCallback((acceptedFiles: File[], fileRejections: any[]) => {
+    clearError();
+
+    // Hata Kontrolü
+    if (fileRejections.length > 0) {
+        const rejection = fileRejections[0];
+        const errorObj = rejection.errors[0];
+
+        // ✅ DÜZELTME BURADA: İngilizce mesajı yakalayıp kendi kodumuza çeviriyoruz
+        if (errorObj.code === "file-invalid-type") {
+            setErrorType("INVALID_TYPE");
+        } else if (errorObj.code === "file-too-large") {
+            setErrorType("SIZE_EXCEEDED");
+        } else {
+            // Bilinmeyen diğer hatalar için kütüphane mesajı (CUSTOM)
+            setErrorType("CUSTOM");
+            setCustomErrorMsg(errorObj.message);
+        }
+        return; 
+    }
+
     if (!acceptedFiles?.length) return;
 
     const newFiles: File[] = [];
     let currentTotalSize = files.reduce((acc, f) => acc + f.size, 0);
 
     for (const file of acceptedFiles) {
-        // 1. Tekil Dosya Limiti
+        // Çift Güvenlik (Manuel Type Kontrolü)
+        if (file.type !== "application/pdf" && !file.name.toLowerCase().endsWith(".pdf")) {
+             setErrorType("INVALID_TYPE");
+             return;
+        }
+
         if (file.size > maxBytesPerFile) {
-            const limitMsg = `Max: ${(maxBytesPerFile / (1024 * 1024)).toFixed(0)} MB`;
-            setError(`${t('fileSizeExceeded') || 'Dosya boyutu sınırı aşıldı'} (${limitMsg})`);
+            setErrorType("SIZE_EXCEEDED");
             return;
         }
         
-        // 2. Toplam Boyut Limiti
         if (currentTotalSize + file.size > MAX_TOTAL_BYTES) {
-            setError(`${t('totalSizeExceeded') || 'Toplam dosya boyutu sınırı aşıldı'} (Max: ${MAX_TOTAL_SIZE_MB}MB)`);
+            setErrorType("TOTAL_SIZE_EXCEEDED");
             return;
         }
 
@@ -60,55 +103,41 @@ export default function MergePdfPage() {
     }
 
     setFiles(prev => [...prev, ...newFiles]);
-    setError(null);
-  }, [files, maxBytesPerFile, t]);
+  }, [files, maxBytesPerFile]);
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
     multiple: true,
     accept: { "application/pdf": [".pdf"] },
     maxSize: maxBytesPerFile,
-    onDropRejected: (fileRejections) => {
-        const rejection = fileRejections[0];
-        if (rejection.errors[0].code === "file-too-large") {
-             const limitMsg = `Max: ${(maxBytesPerFile / (1024 * 1024)).toFixed(0)} MB`;
-             setError(`${t('fileSizeExceeded') || 'Dosya boyutu sınırı aşıldı'} (${limitMsg})`);
-        } else {
-            setError(rejection.errors[0].message);
-        }
-    },
   });
 
   const handleSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFiles = e.target.files;
     if (selectedFiles) {
         const newFilesList = Array.from(selectedFiles);
-        onDrop(newFilesList); 
+        onDrop(newFilesList, []); 
     }
     e.target.value = '';
   };
 
-  const removeFile = (index: number) => {
-    setFiles(prev => prev.filter((_, i) => i !== index));
-  };
-
-  const clearFiles = () => {
-    setFiles([]);
-    setProcessedBlob(null);
-    setError(null);
-  };
-
   const handleDropFromPanel = (e?: React.DragEvent<HTMLDivElement> | React.MouseEvent<HTMLButtonElement>) => {
+    clearError();
     if (pdfFile) {
+        // Panelden gelen dosya için de tip kontrolü
+        if (pdfFile.type !== "application/pdf" && !pdfFile.name.toLowerCase().endsWith(".pdf")) {
+            setErrorType("INVALID_TYPE");
+            return;
+        }
+
         if (pdfFile.size > maxBytesPerFile) {
-            const limitMsg = `Max: ${(maxBytesPerFile / (1024 * 1024)).toFixed(0)} MB`;
-            setError(`${t('fileSizeExceeded') || 'Dosya boyutu sınırı aşıldı'} (${limitMsg})`);
+            setErrorType("SIZE_EXCEEDED");
             return;
         }
 
         const currentTotalSize = files.reduce((acc, f) => acc + f.size, 0);
         if (currentTotalSize + pdfFile.size > MAX_TOTAL_BYTES) {
-            setError(`${t('totalSizeExceeded') || 'Toplam dosya boyutu sınırı aşıldı'} (Max: ${MAX_TOTAL_SIZE_MB}MB)`);
+            setErrorType("TOTAL_SIZE_EXCEEDED");
             return;
         }
 
@@ -116,30 +145,30 @@ export default function MergePdfPage() {
 
         if (!isAlreadyInList) {
             setFiles(prev => [...prev, pdfFile]);
-            setError(null);
             if (e && 'stopPropagation' in e) { 
                 e.stopPropagation(); 
                 e.preventDefault();
             }
         } else {
-            setError(`"${pdfFile.name}" ${t('fileAlreadyInList')}`);
+            setErrorType("FILE_ALREADY_IN_LIST");
+            setCustomErrorMsg(pdfFile.name);
         }
     } else {
-        setError(t('panelPdfError'));
+        setErrorType("PANEL_ERROR");
     }
   };
 
   // --- MERGE İŞLEMİ ---
   const handleMergePdfs = async () => {
     if (files.length < 2) {
-      setError(t('mergeMinFilesError'));
+      setErrorType("MERGE_MIN_FILES");
       return;
     }
 
     const canProceed = await checkLimit();
     if (!canProceed) return;
 
-    setError(null);
+    clearError();
     setMerging(true);
 
     try {
@@ -165,7 +194,7 @@ export default function MergePdfPage() {
 
     } catch (e: any) {
       console.error("❌ Birleştirme Hatası:", e);
-      setError(e?.message || t('unknownMergeError'));
+      setErrorType("MERGE_ERROR");
     } finally {
       setMerging(false);
     }
@@ -188,7 +217,7 @@ export default function MergePdfPage() {
   const handleSave = async () => {
     if (!processedBlob || !session) return;
     setSaving(true);
-    setError(null);
+    clearError();
     try {
       const filename = "merged.pdf";
       const fileToSave = new File([processedBlob], filename, { type: "application/pdf" });
@@ -204,7 +233,7 @@ export default function MergePdfPage() {
 
     } catch (e: any) {
       console.error("❌ Save error:", e);
-      setError(e?.message || t('saveError'));
+      setErrorType("SAVE_ERROR");
     } finally {
       setSaving(false);
     }
@@ -212,6 +241,27 @@ export default function MergePdfPage() {
 
   const isReady = files.length >= 2;
   const hasProcessed = processedBlob !== null;
+
+  // ✅ Hata Mesajı Renderlayıcı (Dil değişince burası yeniden çalışır)
+  const getErrorMessage = () => {
+    if (errorType === "CUSTOM" && customErrorMsg) return customErrorMsg;
+
+    switch (errorType) {
+        case "INVALID_TYPE": return t("invalidFileType"); // ✅ Artık çeviri dönecek
+        case "SIZE_EXCEEDED": 
+            return `${t("fileSizeExceeded")} (Max: ${(maxBytesPerFile / (1024 * 1024)).toFixed(0)} MB)`;
+        case "TOTAL_SIZE_EXCEEDED":
+            return `${t("totalSizeExceeded")} (Max: ${MAX_TOTAL_SIZE_MB}MB)`;
+        case "PANEL_ERROR": return t("panelPdfError");
+        case "MERGE_MIN_FILES": return t("mergeMinFilesError");
+        case "FILE_ALREADY_IN_LIST": return `"${customErrorMsg}" ${t("fileAlreadyInList")}`;
+        case "MERGE_ERROR": return t("unknownMergeError");
+        case "SAVE_ERROR": return t("saveError");
+        default: return null;
+    }
+  };
+
+  const currentError = getErrorMessage();
 
   return (
     <main className="min-h-screen p-6 max-w-4xl mx-auto font-bold text-[var(--foreground)]">
@@ -259,32 +309,17 @@ export default function MergePdfPage() {
           {files.length > 0 && (
             <div className="mt-6">
               <div className="flex justify-between items-center mb-2">
-                <h2
-                  className="text-lg opacity-90"
-                  style={{ color: "var(--foreground)" }}
-                >
+                <h2 className="text-lg opacity-90" style={{ color: "var(--foreground)" }}>
                   {t('selectedFiles')} ({files.length})
                 </h2>
 
-                {/* Tümünü Temizle Butonu – BEYAZ */}
                 <button
                   onClick={clearFiles}
                   className="flex items-center gap-1 text-sm font-semibold bg-transparent shadow-none border-none p-2 rounded transition-colors"
                   style={{ color: "var(--danger-action-text)" }}
                 >
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    strokeWidth={1.5}
-                    stroke="currentColor"
-                    className="w-4 h-4"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79"
-                    />
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79" />
                   </svg>
                   {t('clearAll')}
                 </button>
@@ -302,68 +337,34 @@ export default function MergePdfPage() {
                     }}
                   >
                     <div className="flex items-center gap-3">
-                      {/* Numara */}
-                      <span
-                        className="font-mono text-xs w-4 opacity-70"
-                        style={{ color: "var(--foreground)" }}
-                      >
+                      <span className="font-mono text-xs w-4 opacity-70" style={{ color: "var(--foreground)" }}>
                         {index + 1}.
                       </span>
-
                       <div className="flex flex-col">
-                        {/* Dosya Adı */}
-                        <span
-                          className="font-bold"
-                          style={{ color: "var(--foreground)" }}
-                        >
-                          {file.name}
-                        </span>
-
-                        {/* Dosya Boyutu */}
-                        <span
-                          className="text-xs opacity-70"
-                          style={{ color: "var(--foreground)" }}
-                        >
-                          ({Math.round(file.size / 1024)} KB)
-                        </span>
+                        <span className="font-bold" style={{ color: "var(--foreground)" }}>{file.name}</span>
+                        <span className="text-xs opacity-70" style={{ color: "var(--foreground)" }}>({Math.round(file.size / 1024)} KB)</span>
                       </div>
                     </div>
 
-                    {/* Kaldır Butonu */}
                     <button
                       onClick={() => removeFile(index)}
                       className="p-2 rounded-full bg-transparent shadow-none transition-all"
                       style={{ color: "var(--danger-action-text)" }}
                       title={t('remove')}
                     >
-                      <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        strokeWidth={1.5}
-                        stroke="currentColor"
-                        className="w-5 h-5"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          d="M6 18L18 6M6 6l12 12"
-                        />
+                      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                       </svg>
                     </button>
                   </li>
                 ))}
               </ul>
 
-              <p
-                className="text-sm opacity-50 font-normal mt-2"
-                style={{ color: "var(--foreground)" }}
-              >
+              <p className="text-sm opacity-50 font-normal mt-2" style={{ color: "var(--foreground)" }}>
                 {t('mergeOrderHint')}
               </p>
             </div>
           )}
-
 
           {/* Merge Butonu */}
           <button 
@@ -391,13 +392,13 @@ export default function MergePdfPage() {
         </>
       )}
 
-      {/* ✅ HATA KUTUSU (Yeni 'error-box' class kullanımı) */}
-      {error && (
-        <div className="error-box mt-6">
+      {/* ✅ HATA KUTUSU */}
+      {currentError && (
+        <div className="error-box mt-6 animate-in fade-in slide-in-from-top-2 duration-300">
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-6 h-6 shrink-0">
             <path fillRule="evenodd" d="M9.401 3.003c1.155-2 4.043-2 5.197 0l7.355 12.748c1.154 2-.29 4.5-2.599 4.5H4.645c-2.309 0-3.752-2.5-2.598-4.5L9.4 3.003zM12 8.25a.75.75 0 01.75.75v3.75a.75.75 0 01-1.5 0V9a.75.75 0 01.75-.75zm0 8.25a.75.75 0 100-1.5.75.75 0 000 1.5z" clipRule="evenodd" />
           </svg>
-          <span>{error}</span>
+          <span>{currentError}</span>
         </div>
       )}
 
@@ -419,10 +420,7 @@ export default function MergePdfPage() {
             </h3>
             
             <div className="flex gap-4 flex-wrap">
-              <button 
-                onClick={handleDownload} 
-                className="btn-primary shadow-md hover:scale-105 flex items-center gap-2"
-              >
+              <button onClick={handleDownload} className="btn-primary shadow-md hover:scale-105 flex items-center gap-2">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
                     <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M12 12.75l-3-3m0 0l3-3m-3 3h7.5" />
                 </svg>
@@ -430,11 +428,7 @@ export default function MergePdfPage() {
               </button>
               
               {session && (
-                  <button 
-                    onClick={handleSave} 
-                    disabled={saving} 
-                    className="btn-primary shadow-md hover:scale-105 disabled:opacity-50 flex items-center gap-2"
-                  >
+                  <button onClick={handleSave} disabled={saving} className="btn-primary shadow-md hover:scale-105 disabled:opacity-50 flex items-center gap-2">
                     {saving ? (
                         <svg className="animate-spin -ml-1 mr-2 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
@@ -449,10 +443,7 @@ export default function MergePdfPage() {
                   </button>
               )}
               
-              <button 
-                onClick={clearFiles} 
-                className="btn-primary shadow-md hover:scale-105 flex items-center gap-2"
-              >
+              <button onClick={clearFiles} className="btn-primary shadow-md hover:scale-105 flex items-center gap-2">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
                     <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
                 </svg>

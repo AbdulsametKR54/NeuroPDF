@@ -1,9 +1,10 @@
+# backend/app/services/llm_manager.py
+
 from fastapi import HTTPException
 from typing import Literal, Optional
 
-from . import ai_service  # gemini tarafın
-from .local_llm_service import analyze_text_with_local_llm  #  yerel LLM tarafı
-from typing import Literal
+from . import ai_service  # gemini tarafı
+from .local_llm_service import analyze_text_with_local_llm  # yerel LLM tarafı
 
 LLMProvider = Literal["cloud", "local"]
 CloudMode = Literal["flash", "pro"]
@@ -21,8 +22,6 @@ def summarize_text(
         return ai_service.gemini_generate(text, prompt_instruction, mode=mode)
 
     if llm_provider == "local":
-        # local LLM’de prompt+text’i birleştirip analiz/özet ürettiriyoruz
-        # (yerelde "summary" dönmesini sağlayacağız)
         result = analyze_text_with_local_llm(text, task="summarize", instruction=prompt_instruction)
         return result.get("summary", "") or "Local LLM yanıt üretmedi."
 
@@ -37,19 +36,25 @@ def chat_over_pdf(
     llm_provider: LLMProvider = "cloud",
     mode: CloudMode = "pro",
 ) -> str:
+    # 1. Prompt'u Hazırla
+    full_prompt = _build_chat_prompt(session_text, filename, history_text, user_message)
+
     if llm_provider == "cloud":
-        # mevcut ai_service.chat_with_pdf’nin prompt yapısını koruyalım:
-        # onun içinden provider seçmek yerine, burada prompt’u hazırlayıp gemini çağıracağız.
-        # En az değişiklik: ai_service’e yeni bir fonksiyon ekleyelim:
-        return ai_service.gemini_chat(prompt=_build_chat_prompt(session_text, filename, history_text, user_message), mode=mode)
+        # DÜZELTME: ai_service.gemini_chat YOKTU. 
+        # Bunun yerine elimizdeki 'gemini_generate' fonksiyonunu kullanıyoruz.
+        # Hazırladığımız 'full_prompt'u metin olarak veriyoruz.
+        return ai_service.gemini_generate(
+            text_content=full_prompt, 
+            prompt_instruction="Aşağıdaki PDF bağlamına ve sohbet geçmişine göre yanıtla:", 
+            mode=mode
+        )
 
     if llm_provider == "local":
         result = analyze_text_with_local_llm(
-            _build_chat_prompt(session_text, filename, history_text, user_message),
+            full_prompt,
             task="chat",
             instruction="PDF asistanı gibi yanıt ver. Türkçe, net ve pratik ol."
         )
-        # local taraf chatte direkt metin döndürebilir:
         return result.get("answer") or result.get("summary") or "Local LLM yanıt üretmedi."
 
     raise HTTPException(status_code=400, detail="Geçersiz llm_provider.")

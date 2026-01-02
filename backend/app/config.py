@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     # Google OAuth
     GOOGLE_CLIENT_ID: str
 
+    # BU SATIRI MUTLAKA EKLEYİN:
+    GEMINI_API_KEY: Optional[str] = None
+    
     # Supabase Configuration
     SUPABASE_URL: str
     SUPABASE_KEY: str

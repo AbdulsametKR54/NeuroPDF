@@ -140,15 +140,10 @@ export default function LoginPage() {
             </div>
           </div>
 
-          {/* Google Login */}
+          {/* Google Login - GÜNCELLENMİŞ STİL */}
           <button
             onClick={handleGoogleLogin}
-            className="w-full flex items-center justify-center gap-3 px-4 py-3 border-2 rounded-xl transition-transform hover:scale-105 font-bold"
-            style={{ 
-              borderColor: 'var(--navbar-border)',
-              backgroundColor: 'var(--background)',
-              color: 'var(--foreground)'
-            }}
+            className="btn-google"
           >
             <svg className="w-5 h-5" viewBox="0 0 24 24">
               <path
@@ -170,6 +165,7 @@ export default function LoginPage() {
             </svg>
             {t('googleLogin')}
           </button>
+
 
           {/* Kayıt Ol Linki */}
           <div className="mt-6 text-center">

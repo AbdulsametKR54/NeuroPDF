@@ -1,21 +1,14 @@
+# FastAPI sunucusu için
 fastapi
 uvicorn[standard]
 python-multipart
-
 celery
 redis
-httpx
-
-pydantic-settings
-python-dotenv
-
-PyPDF2
-gTTS
-
-# cloud (şimdilik)
 google-generativeai
-
-# local llm + spellcheck
+PyPDF2
+zemberek-python
+httpx
+pydantic-settings  
+python-dotenv
+gTTS
 ollama
-zeyrek
-nltk

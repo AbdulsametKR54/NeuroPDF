@@ -6,6 +6,8 @@ from pydantic import BaseModel
 from typing import Optional, List
 import base64
 import logging
+from PIL import Image
+import io
 
 from app.db import get_db
 from app.deps import get_current_user
@@ -23,27 +25,23 @@ from app.services.avatar_service import (
 )
 
 from app.models import UserAvatar
-from PIL import Image
-import io
 
 router = APIRouter(prefix="/api/v1/user", tags=["User Avatar"])
 
-
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+JPEG_MAGIC = b"\xff\xd8\xff"
 logger = logging.getLogger(__name__)
 
 
+# --- REQUEST MODELLERİ ---
 class GenerateAvatarRequest(BaseModel):
-    prompt: str  # Kullanıcının avatar açıklaması (zorunlu)
-
+    prompt: str
 
 class ConfirmAvatarRequest(BaseModel):
-    temp_avatar_id: str  # Geçici avatar ID'si (generate endpoint'inden dönen)
-
+    temp_avatar_id: str
 
 class EditAvatarRequest(BaseModel):
-    prompt: str  # Düzenleme talimatı (örn: "Daha parlak yap", "Kontrastı artır", "Siyah-beyaz yap")
-
+    prompt: str
 
 class AvatarResponse(BaseModel):
     id: int
@@ -52,6 +50,25 @@ class AvatarResponse(BaseModel):
     created_at: str
 
 
+# --- YARDIMCI FONKSİYON ---
+def resolve_user_id(user_id: str, current_user: dict) -> str:
+    """
+    Eğer user_id 'me' ise, token'daki sub (user_id) değerini döndürür.
+    Değilse ve yetki yoksa 403 fırlatır.
+    """
+    token_user_id = current_user["sub"]
+    
+    if user_id == "me":
+        return token_user_id
+    
+    if user_id != token_user_id:
+        raise HTTPException(status_code=403, detail="Forbidden: You can only access your own avatar.")
+    
+    return user_id
+
+
+# --- ENDPOINTLER ---
+
 @router.get("/{user_id}/avatar")
 async def get_avatar(
     user_id: str,
@@ -59,34 +76,45 @@ async def get_avatar(
     current_user: dict = Depends(get_current_user),
 ):
     """
-    Kullanıcının mevcut avatarını döndürür.
+    Kullanıcının aktif avatarını 'users' tablosundaki 'active_avatar_url' alanından çeker.
     """
-    # Kullanıcı sadece kendi avatarını görebilir
-    if current_user["sub"] != user_id:
-        raise HTTPException(status_code=403, detail="Forbidden")
+    # 1. Kullanıcı kimliği doğrulama ('me' kontrolü)
+    target_user_id = resolve_user_id(user_id, current_user)
     
+    # 2. Users tablosundan kullanıcıyı bul
     from app.models import User
-    user = db.query(User).filter(User.id == user_id).first()
+    user = db.query(User).filter(User.id == target_user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    
-    # Supabase Storage'dan avatar'ı çek
+        
+    # 3. Aktif avatar yolunu kontrol et
+    if not user.active_avatar_url:
+        # Varsayılan avatar yoksa 404 döner (Frontend varsayılanı gösterir)
+        raise HTTPException(status_code=404, detail="Active avatar not set")
+
+    # 4. Supabase Storage'dan indir
     from app.db import get_supabase
     supabase = get_supabase()
     
-    if not user.active_avatar_url or user.active_avatar_url == "static/defaults/default_avatar.png":
-        raise HTTPException(status_code=404, detail="Avatar not found")
-    
     try:
-        # Storage path'ten avatar'ı al
-        avatar_data = supabase.storage.from_("avatars").download(user.active_avatar_url)
-        if isinstance(avatar_data, dict) and avatar_data.get("error"):
-            raise HTTPException(status_code=404, detail="Avatar not found in storage")
+        # Path'i loglayalım (debug için)
+        logger.info(f"Downloading active avatar for {target_user_id}: {user.active_avatar_url}")
         
+        # 'avatars' bucket'ından dosyayı indir
+        avatar_data = supabase.storage.from_("avatars").download(user.active_avatar_url)
+        
+        # Supabase hata dönerse (dict dönebilir)
+        if isinstance(avatar_data, dict) and avatar_data.get("error"):
+            logger.error(f"Storage error: {avatar_data}")
+            raise HTTPException(status_code=404, detail="Image file not found in storage")
+        
+        # Başarılıysa resmi dön
         from fastapi.responses import Response
         return Response(content=avatar_data, media_type="image/png")
+        
     except Exception as e:
-        raise HTTPException(status_code=500, detail="Failed to retrieve avatar")
+        logger.error(f"Avatar download failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve avatar file")
 
 
 @router.get("/{user_id}/avatars")
@@ -96,24 +124,18 @@ async def get_avatar_history(
     current_user: dict = Depends(get_current_user),
     limit: int = 10,
 ):
-    """
-    Kullanıcının avatar geçmişini döndürür.
-    """
-    # Kullanıcı sadece kendi avatar geçmişini görebilir
-    if current_user["sub"] != user_id:
-        raise HTTPException(status_code=403, detail="Forbidden")
+    target_user_id = resolve_user_id(user_id, current_user)
     
     from app.models import User
     from sqlalchemy import desc
     
-    user = db.query(User).filter(User.id == user_id).first()
+    user = db.query(User).filter(User.id == target_user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
-    # Avatar geçmişini al
     avatars = (
         db.query(UserAvatar)
-        .filter(UserAvatar.user_id == user_id)
+        .filter(UserAvatar.user_id == target_user_id)
         .order_by(desc(UserAvatar.created_at))
         .limit(limit)
         .all()
@@ -137,14 +159,10 @@ async def upload_avatar(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    """
-    Kullanıcının kendi avatarını yüklemesi.
-    """
-    # Kullanıcı sadece kendi avatarını güncelleyebilir
-    if current_user["sub"] != user_id:
-        raise HTTPException(status_code=403, detail="Forbidden")
+    # 'me' kontrolü (BURASI HATAYI ÇÖZEN KISIM)
+    target_user_id = resolve_user_id(user_id, current_user)
     
-    # 1) Content-Type (hızlı filtre)
+    # 1) Content-Type
     if file.content_type != "image/png":
         raise HTTPException(status_code=415, detail="Only PNG files are allowed")
 
@@ -152,14 +170,14 @@ async def upload_avatar(
     if not contents:
         raise HTTPException(status_code=400, detail="Empty file")
 
-    # 2) PNG magic bytes kontrolü (spoof engeli)
+    # 2) Magic bytes
     if not contents.startswith(PNG_MAGIC):
         raise HTTPException(status_code=415, detail="Only PNG files are allowed")
 
-    # 3) Pillow ile doğrulama (bozuk dosya / sahte header yakalama)
+    # 3) Pillow doğrulama
     try:
         img = Image.open(io.BytesIO(contents))
-        img.verify()  # dosyanın bozuk olup olmadığını kontrol eder
+        img.verify()
         if img.format != "PNG":
             raise HTTPException(status_code=415, detail="Only PNG files are allowed")
     except HTTPException:
@@ -167,20 +185,20 @@ async def upload_avatar(
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid image file")
 
-    # 4) Storage path üret
-    storage_path = create_storage_path(user_id)
+    # 4) Storage path
+    storage_path = create_storage_path(target_user_id)
 
-    # 5) Supabase Storage upload
+    # 5) Upload
     try:
         upload_avatar_png_to_storage(storage_path, contents)
     except Exception as e:
         raise HTTPException(status_code=500, detail="Failed to upload avatar")
 
-    # 6) DB: user_avatars kaydı + users.active_avatar_url güncelle
+    # 6) DB Kayıt
     try:
         avatar = save_avatar_record_and_set_active(
             db=db,
-            user_id=user_id,
+            user_id=target_user_id,
             image_path=storage_path,
             is_ai=False,
         )
@@ -201,16 +219,10 @@ async def generate_avatar_preview(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    """
-    Prompt'a göre avatar önizlemesi oluşturur (henüz kaydetmez).
-    Kullanıcı onay verene kadar geçici olarak saklanır.
-    """
-    # Kullanıcı sadece kendi avatarını güncelleyebilir
-    if current_user["sub"] != user_id:
-        raise HTTPException(status_code=403, detail="Forbidden")
+    target_user_id = resolve_user_id(user_id, current_user)
     
     from app.models import User
-    user = db.query(User).filter(User.id == user_id).first()
+    user = db.query(User).filter(User.id == target_user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
@@ -220,19 +232,17 @@ async def generate_avatar_preview(
         raise HTTPException(status_code=400, detail="Prompt is required")
     
     try:
-        # Prompt'a göre avatar oluştur
         avatar_bytes = await generate_avatar_with_prompt(username, request.prompt)
         
-        # Geçici olarak Redis'e kaydet (onay bekleyen)
-        temp_avatar_id = save_temp_avatar(user_id, avatar_bytes, request.prompt)
+        # Redis'e kaydet
+        temp_avatar_id = save_temp_avatar(target_user_id, avatar_bytes, request.prompt)
         
-        # Base64 encode et (frontend'de göstermek için)
         avatar_base64 = base64.b64encode(avatar_bytes).decode('utf-8')
         
         return {
             "message": "Avatar preview generated",
             "temp_avatar_id": temp_avatar_id,
-            "preview_image": f"data:image/png;base64,{avatar_base64}",  # Data URL format
+            "preview_image": f"data:image/png;base64,{avatar_base64}",
             "prompt": request.prompt,
         }
     except Exception as e:
@@ -248,20 +258,14 @@ async def edit_avatar(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    """
-    Yüklenen bir fotoğrafı prompt'a göre düzenler ve önizleme döndürür (henüz kaydetmez).
-    Kullanıcı onay verene kadar geçici olarak saklanır.
-    """
-    # Kullanıcı sadece kendi avatarını düzenleyebilir
-    if current_user["sub"] != user_id:
-        raise HTTPException(status_code=403, detail="Forbidden")
+    target_user_id = resolve_user_id(user_id, current_user)
     
     from app.models import User
-    user = db.query(User).filter(User.id == user_id).first()
+    user = db.query(User).filter(User.id == target_user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
-    # 1) Dosya kontrolü
+    # Dosya kontrolleri
     if file.content_type not in ["image/png", "image/jpeg", "image/jpg"]:
         raise HTTPException(status_code=415, detail="Only PNG/JPEG files are allowed")
 
@@ -269,22 +273,15 @@ async def edit_avatar(
     if not contents:
         raise HTTPException(status_code=400, detail="Empty file")
     
-    # 2) PNG magic bytes kontrolü veya JPEG kontrolü
-    PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
-    JPEG_MAGIC = b"\xff\xd8\xff"
-    
     if not (contents.startswith(PNG_MAGIC) or contents.startswith(JPEG_MAGIC)):
         raise HTTPException(status_code=415, detail="Invalid image file")
     
-    # 3) Pillow ile doğrulama ve PNG'ye çevir
+    # PNG'ye çevir
     try:
         img = Image.open(io.BytesIO(contents))
         img.verify()
         
-        # Tekrar aç (verify kapatır)
         img = Image.open(io.BytesIO(contents))
-        
-        # PNG'ye çevir (avatar formatı PNG)
         if img.format != "PNG":
             png_buffer = io.BytesIO()
             img.convert("RGB").save(png_buffer, format="PNG")
@@ -296,19 +293,14 @@ async def edit_avatar(
         raise HTTPException(status_code=400, detail="Prompt is required")
     
     try:
-        # Fotoğrafı prompt'a göre düzenle
         edited_avatar_bytes = await edit_avatar_with_prompt(contents, prompt)
-        
-        # Geçici olarak Redis'e kaydet (onay bekleyen)
-        temp_avatar_id = save_temp_avatar(user_id, edited_avatar_bytes, f"Edited: {prompt}")
-        
-        # Base64 encode et (frontend'de göstermek için)
+        temp_avatar_id = save_temp_avatar(target_user_id, edited_avatar_bytes, f"Edited: {prompt}")
         avatar_base64 = base64.b64encode(edited_avatar_bytes).decode('utf-8')
         
         return {
             "message": "Avatar edited successfully",
             "temp_avatar_id": temp_avatar_id,
-            "preview_image": f"data:image/png;base64,{avatar_base64}",  # Data URL format
+            "preview_image": f"data:image/png;base64,{avatar_base64}",
             "prompt": prompt,
         }
     except Exception as e:
@@ -323,48 +315,38 @@ async def confirm_avatar(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    """
-    Geçici avatar'ı onaylar ve profil fotoğrafı olarak ayarlar.
-    """
-    # Kullanıcı sadece kendi avatarını onaylayabilir
-    if current_user["sub"] != user_id:
-        raise HTTPException(status_code=403, detail="Forbidden")
+    target_user_id = resolve_user_id(user_id, current_user)
     
     temp_avatar_id = request.temp_avatar_id
     if not temp_avatar_id:
         raise HTTPException(status_code=400, detail="temp_avatar_id is required")
     
-    # Geçici avatar'ı al
-    avatar_bytes = get_temp_avatar(user_id, temp_avatar_id)
+    avatar_bytes = get_temp_avatar(target_user_id, temp_avatar_id)
     if not avatar_bytes:
         raise HTTPException(status_code=404, detail="Temp avatar not found or expired")
     
     try:
-        # Storage path oluştur
-        storage_path = create_storage_path(user_id)
-        
-        # Supabase Storage'a yükle
+        storage_path = create_storage_path(target_user_id)
         upload_avatar_png_to_storage(storage_path, avatar_bytes)
         
-        # DB'ye kaydet ve aktif yap
         avatar = save_avatar_record_and_set_active(
             db=db,
-            user_id=user_id,
+            user_id=target_user_id,
             image_path=storage_path,
-            is_ai=True,  # AI ile oluşturulmuş
+            is_ai=True,
         )
         
-        # Redis'ten geçici avatar'ı sil (opsiyonel, TTL zaten var)
+        # Redis temizliği
         from app.redis_client import redis_client
         if redis_client:
             try:
-                redis_key = f"temp_avatar:{user_id}:{temp_avatar_id}"
+                redis_key = f"temp_avatar:{target_user_id}:{temp_avatar_id}"
                 redis_client.delete(redis_key)
             except:
-                pass  # Silme hatası kritik değil
+                pass
         
         return {
-            "message": "Avatar confirmed and set as profile picture",
+            "message": "Avatar confirmed",
             "path": avatar.image_path,
             "avatar_id": avatar.id,
         }

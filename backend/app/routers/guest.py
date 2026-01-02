@@ -1,10 +1,9 @@
+# app/routers/guest.py
 from fastapi import APIRouter, HTTPException, Header
 from pydantic import BaseModel
 from typing import Optional
 import uuid
 import logging
-from supabase import Client
-from ..db import get_supabase
 from ..redis_client import redis_client
 from ..config import settings
 

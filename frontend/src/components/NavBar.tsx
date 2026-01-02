@@ -8,7 +8,7 @@ import AuthBar from "@/components/AuthBar";
 import LanguageSwitcher from "@/components/LanguageSwitcher";
 import ThemeToggle from "@/components/ThemeToggle";
 import { useLanguage } from "@/context/LanguageContext";
-import NeuroLogo from "@/components/NeuroLogo";
+// import NeuroLogo from "@/components/NeuroLogo"; // Logo bileşeni varsa açabilirsiniz
 
 // ✅ Lucide iconları
 import {
@@ -35,22 +35,30 @@ export default function NavBar() {
   const [open, setOpen] = useState(false);
 
   // ✅ İSTENEN NAVBAR SIRASI:
-  // pdfpreview-extractpages-editpages-mergepdfs-summerizepdf-pro(taç)
+  // pdfpreview - extract - edit - merge - summarize - pro(taç)
   const links: NavLink[] = [
-    // pdfpreview
-    { href: "/upload", label: t("navUpload"), Icon: UploadCloud },
+    // 1. PDF Preview (Upload)
+    { href: "/upload", label: t("navUpload") || "Yükle", Icon: UploadCloud },
 
-    // extractpages
-    { href: "/extract-pdf", label: t("navExtract"), Icon: Scissors },
+    // 2. Extract Pages
+    { href: "/extract-pdf", label: t("navExtract") || "Ayıkla", Icon: Scissors },
 
-    // editpages
-    { href: "/edit-pdf", label: t("navEdit"), Icon: FilePenLine },
+    // 3. Edit Pages
+    { href: "/edit-pdf", label: t("navEdit") || "Düzenle", Icon: FilePenLine },
 
-    // mergepdfs
-    { href: "/merge-pdf", label: t("navMerge"), Icon: Merge },
+    // 4. Merge PDFs
+    { href: "/merge-pdf", label: t("navMerge") || "Birleştir", Icon: Merge },
 
-    // summerizepdf
-    { href: "/summarize-pdf", label: t("navSummarize"), Icon: FileText },
+    // 5. Summarize PDF
+    { href: "/summarize-pdf", label: t("navSummarize") || "Özetle", Icon: FileText },
+
+    // 6. PRO (Taç İkonlu)
+    { 
+      href: "/pricing", 
+      label: "Pro", 
+      Icon: Crown, 
+      variant: "pro" 
+    },
   ];
 
   const isActive = (href: string) =>
@@ -66,6 +74,7 @@ export default function NavBar() {
     >
       <div className="w-full px-4 sm:px-6 lg:px-8">
         <div className="flex h-16 items-center justify-between">
+          
           {/* --- SOL: LOGO --- */}
           <div className="flex-shrink-0 flex items-center">
             <Link
@@ -73,10 +82,6 @@ export default function NavBar() {
               className="font-extrabold text-xl sm:text-2xl tracking-tight hover:opacity-80 transition-opacity flex items-center gap-2"
               style={{ color: "var(--foreground)" }}
             >
-              {/* <span className="inline-flex items-center justify-center h-10 w-10 sm:h-12 sm:w-12 shrink-0">
-                <NeuroLogo className="h-full w-full" />
-              </span> */}
-
               <span className="bg-clip-text text-transparent bg-gradient-to-r from-red-600 to-orange-600">
                 Neuro
               </span>
@@ -85,10 +90,13 @@ export default function NavBar() {
           </div>
 
           {/* --- ORTA: DESKTOP MENU --- */}
-          <nav className="hidden lg:flex items-center gap-2 text-sm">
+          <nav className="hidden lg:flex items-center gap-1 xl:gap-2 text-sm">
             {links.map((l) => {
               const Icon = l.Icon;
               const active = isActive(l.href);
+              const isPro = l.variant === "pro";
+              // ✅ Summarize linkini kontrol et
+              const isSummarize = l.href === "/summarize-pdf";
 
               return (
                 <Link
@@ -99,14 +107,29 @@ export default function NavBar() {
                     active
                       ? "bg-[var(--button-bg)] text-[var(--button-text)] shadow-md"
                       : "text-[var(--foreground)] hover:bg-[var(--container-bg)] opacity-70 hover:opacity-100",
-                    l.variant === "pro" ? "ring-1 ring-[var(--navbar-border)]" : "",
-                  ].join(" ")}
+                    isPro 
+                      ? "bg-gradient-to-r from-yellow-400/20 to-orange-400/20 text-orange-600 dark:text-yellow-400 ring-1 ring-orange-400/50 hover:from-yellow-400/30 hover:to-orange-400/30 !opacity-100" 
+                      : "",
+                    isSummarize && !active
+                      ? [
+                          "!border-[var(--summarize-border-light)]",
+                          "text-[var(--summarize-text-light)]",
+                          "hover:bg-[var(--summarize-hover-bg-light)]",
+                          "dark:!border-amber-400",
+                          "dark:text-yellow-400",
+                          "!opacity-100"
+                        ].join(" ")
+                      : ""
+                  ].join(" ")}   // ✅ FIX
                 >
                   {Icon && (
                     <Icon
                       className={[
-                        "w-4 h-4 opacity-90",
-                        l.variant === "pro" ? "scale-105" : "",
+                        "w-4 h-4",
+                        active ? "opacity-100" : "opacity-70",
+                        isPro ? "text-orange-500 dark:text-yellow-400 w-5 h-5" : "",
+                        // ✅ Summarize ikonu rengi
+                        isSummarize && !active ? "!opacity-100 text-yellow-600 dark:text-yellow-500" : ""
                       ].join(" ")}
                       aria-hidden="true"
                     />
@@ -150,6 +173,9 @@ export default function NavBar() {
               {links.map((l) => {
                 const Icon = l.Icon;
                 const active = isActive(l.href);
+                const isPro = l.variant === "pro";
+                 // ✅ Summarize linkini kontrol et
+                const isSummarize = l.href === "/summarize-pdf";
 
                 return (
                   <Link
@@ -157,18 +183,28 @@ export default function NavBar() {
                     href={l.href}
                     onClick={() => setOpen(false)}
                     className={[
-                      "px-4 py-3 rounded-xl font-medium transition-all duration-200 flex items-center gap-3",
+                      // ✅ border sınıfı eklendi
+                      "px-4 py-3 rounded-xl font-medium transition-all duration-200 flex items-center gap-3 border",
                       active
-                        ? "bg-[var(--button-bg)] text-[var(--button-text)] shadow-sm"
-                        : "text-[var(--foreground)] hover:bg-[var(--container-bg)]",
-                      l.variant === "pro" ? "ring-1 ring-[var(--navbar-border)]" : "",
+                        ? "bg-[var(--button-bg)] text-[var(--button-text)] shadow-sm border-transparent"
+                        : "text-[var(--foreground)] hover:bg-[var(--container-bg)] border-transparent",
+                      isPro 
+                        ? "bg-gradient-to-r from-yellow-400/10 to-orange-400/10 text-orange-600 dark:text-yellow-400 !border-orange-200 dark:!border-yellow-900" 
+                        : "",
+                       // ✅ Summarize Altın Çerçeve (Mobil)
+                      isSummarize && !active
+                        ? "!border-yellow-500 dark:!border-amber-400 text-yellow-700 dark:text-yellow-400 bg-yellow-50/50 dark:bg-transparent"
+                        : ""
                     ].join(" ")}
                   >
                     {Icon && (
                       <Icon
                         className={[
-                          "w-5 h-5 opacity-90",
-                          l.variant === "pro" ? "scale-105" : "",
+                          "w-5 h-5",
+                          active ? "opacity-100" : "opacity-70",
+                          isPro ? "text-orange-500 dark:text-yellow-400" : "",
+                           // ✅ Summarize ikonu rengi (Mobil)
+                          isSummarize && !active ? "!opacity-100 text-yellow-600 dark:text-yellow-500" : ""
                         ].join(" ")}
                         aria-hidden="true"
                       />

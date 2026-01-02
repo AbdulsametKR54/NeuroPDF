@@ -29,4 +29,3 @@ def verify_api_key(x_api_key: str = Security(API_KEY_HEADER)):
         )
     
     return True
-

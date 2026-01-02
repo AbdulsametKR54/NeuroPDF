@@ -120,6 +120,7 @@ class UserStats(Base):
 class UserStatsResponse(BaseModel):
     summary_count: int
     tools_count: int
+    role: str = "Standart"
 
 
 # ==========================================

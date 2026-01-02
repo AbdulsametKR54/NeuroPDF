@@ -1,11 +1,13 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException, Query, Depends, Security
+# aiservice/app/routers/analysis.py
+
+from fastapi import APIRouter, UploadFile, File, HTTPException, Query, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from ..tasks import pdf_tasks
 from ..services import ai_service, pdf_service
 from ..services.tts_manager import text_to_speech
-from ..services.llm_manager import CloudMode, LLMProvider, summarize_text, chat_over_pdf  # ✅
+from ..services.llm_manager import CloudMode, LLMProvider, summarize_text, chat_over_pdf
 from ..deps import verify_api_key
 
 router = APIRouter(
@@ -86,6 +88,7 @@ async def start_chat(
     pdf_bytes = await file.read()
     text = pdf_service.extract_text_from_pdf_bytes(pdf_bytes)
 
+    # DÜZELTME: Artık hem llm_provider hem mode gönderiyoruz, servis bunu karşılayacak.
     session_id = ai_service.create_pdf_chat_session(
         text,
         filename=file.filename,
@@ -124,6 +127,7 @@ async def chat_about_pdf(
         for turn in history[-10:]:
             history_text += f"{turn['role'].upper()}: {turn['content']}\n"
 
+        # Session'daki tercihi kullan, yoksa request'ten geleni, o da yoksa varsayılanı.
         llm_provider = req.llm_provider or session.get("llm_provider", "cloud")
         mode = req.mode or session.get("mode", "pro")
 

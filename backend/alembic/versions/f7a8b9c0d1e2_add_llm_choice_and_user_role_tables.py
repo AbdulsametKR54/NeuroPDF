@@ -77,4 +77,3 @@ def downgrade() -> None:
     # Drop tables
     op.drop_table('user_roles')
     op.drop_table('llm_choices')
-

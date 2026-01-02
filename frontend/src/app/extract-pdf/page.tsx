@@ -10,93 +10,137 @@ import UsageLimitModal from "@/components/UsageLimitModal";
 import { usePdf } from "@/context/PdfContext";
 import { useLanguage } from "@/context/LanguageContext";
 import { sendRequest } from "@/utils/api";
-import { getMaxUploadBytes } from "@/app/config/fileLimits"; // ✅ Limit settings
+import { getMaxUploadBytes } from "@/app/config/fileLimits";
 
 const PdfViewer = dynamic(() => import("@/components/PdfViewer"), { ssr: false });
+
+// Helper: Hata Kodları için ENUM
+type ErrorType = "NONE" | "INVALID_TYPE" | "SIZE_EXCEEDED" | "CUSTOM" | "UPLOAD_FIRST" | "ENTER_PAGE_RANGE" | "EXTRACT_ERROR" | "SAVE_ERROR" | "PANEL_ERROR";
 
 export default function ExtractPdfPage() {
   const { data: session, status } = useSession();
   const { pdfFile, savePdf } = usePdf();
-  const { t } = useLanguage();
+  
+  // ✅ 1. Dil desteği
+  const { t, language } = useLanguage();
   
   const [file, setFile] = useState<File | null>(null);
   const [processedBlob, setProcessedBlob] = useState<Blob | null>(null);
   const [pageRange, setPageRange] = useState("");
   const [extracting, setExtracting] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  
+  // ✅ 2. Hata State'i (Metin yerine Kod)
+  const [errorType, setErrorType] = useState<ErrorType>("NONE");
+  const [customErrorMsg, setCustomErrorMsg] = useState<string | null>(null);
 
-  // ✅ Limit Calculation
+  // Limit Calculation
   const isGuest = status !== "authenticated";
   const maxBytes = getMaxUploadBytes(isGuest);
 
   const { usageInfo, showLimitModal, checkLimit, closeLimitModal, redirectToLogin } = useGuestLimit();
 
-  const onDrop = useCallback((acceptedFiles: File[]) => {
+  const clearError = () => {
+    setErrorType("NONE");
+    setCustomErrorMsg(null);
+  };
+
+  const onDrop = useCallback((acceptedFiles: File[], fileRejections: any[]) => {
+    clearError();
+
+    // Hata Kontrolü
+    if (fileRejections.length > 0) {
+        const rejection = fileRejections[0];
+        const errorObj = rejection.errors[0];
+
+        if (errorObj.code === "file-invalid-type") {
+            setErrorType("INVALID_TYPE");
+        } else if (errorObj.code === "file-too-large") {
+            setErrorType("SIZE_EXCEEDED");
+        } else {
+            setErrorType("CUSTOM");
+            setCustomErrorMsg(errorObj.message);
+        }
+        setFile(null);
+        return;
+    }
+
     if (acceptedFiles?.length) {
       const f = acceptedFiles[0];
-      // Manual Check
+      
+      // Manuel Tip Kontrolü
+      if (f.type !== "application/pdf" && !f.name.toLowerCase().endsWith(".pdf")) {
+          setFile(null);
+          setErrorType("INVALID_TYPE");
+          return;
+      }
+
+      // Manuel Boyut Kontrolü
       if (f.size > maxBytes) {
         setFile(null);
-        setError(`${t('fileSizeExceeded') || 'File size limit exceeded'} (Max: ${(maxBytes / (1024 * 1024)).toFixed(0)} MB)`);
+        setErrorType("SIZE_EXCEEDED");
         return;
       }
       setFile(f);
       setProcessedBlob(null);
       setPageRange(""); 
-      setError(null);
     }
-  }, [maxBytes, t]);
+  }, [maxBytes]);
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
     multiple: false,
     accept: { "application/pdf": [".pdf"] },
-    maxSize: maxBytes, // ✅ Notify Dropzone of limit
-    onDropRejected: (fileRejections) => {
-        const rejection = fileRejections[0];
-        if (rejection.errors[0].code === "file-too-large") {
-            setError(`${t('fileSizeExceeded') || 'File size limit exceeded'} (Max: ${(maxBytes / (1024 * 1024)).toFixed(0)} MB)`);
-        } else {
-            setError(rejection.errors[0].message);
-        }
-        setFile(null);
-    },
+    maxSize: maxBytes, 
   });
 
   const handleDropFromPanel = (e?: React.DragEvent<HTMLDivElement> | React.MouseEvent<HTMLButtonElement>) => {
+    clearError();
     if (pdfFile) {
+        if (pdfFile.type !== "application/pdf" && !pdfFile.name.toLowerCase().endsWith(".pdf")) {
+            setFile(null);
+            setErrorType("INVALID_TYPE");
+            return;
+        }
+
         if (pdfFile.size > maxBytes) {
             setFile(null);
-            setError(`${t('fileSizeExceeded') || 'File size limit exceeded'} (Max: ${(maxBytes / (1024 * 1024)).toFixed(0)} MB)`);
+            setErrorType("SIZE_EXCEEDED");
             return;
         }
         setFile(pdfFile);
         setProcessedBlob(null);
         setPageRange(""); 
-        setError(null);
+        
         if (e && 'stopPropagation' in e) {
             e.stopPropagation(); 
             e.preventDefault();
         }
     } else {
-        setError(t('panelPdfError'));
+        setErrorType("PANEL_ERROR");
     }
   };
 
   const handleSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    clearError();
     const f = e.target.files?.[0];
     if (f) {
+      if (f.type !== "application/pdf" && !f.name.toLowerCase().endsWith(".pdf")) {
+          setFile(null);
+          setErrorType("INVALID_TYPE");
+          e.target.value = '';
+          return;
+      }
+
       if (f.size > maxBytes) {
         setFile(null);
-        setError(`${t('fileSizeExceeded') || 'File size limit exceeded'} (Max: ${(maxBytes / (1024 * 1024)).toFixed(0)} MB)`);
+        setErrorType("SIZE_EXCEEDED");
         e.target.value = '';
         return;
       }
       setFile(f);
       setProcessedBlob(null);
       setPageRange(""); 
-      setError(null);
     }
     e.target.value = ''; 
   };
@@ -108,18 +152,18 @@ export default function ExtractPdfPage() {
   // --- 1. EXTRACTION OPERATION ---
   const handleExtractPages = async () => {
     if (!file) {
-      setError(t('uploadFirst'));
+      setErrorType("UPLOAD_FIRST");
       return;
     }
     if (!pageRange.trim()) {
-      setError(t('enterPageRangeError'));
+      setErrorType("ENTER_PAGE_RANGE");
       return;
     }
 
     const canProceed = await checkLimit();
     if (!canProceed) return;
 
-    setError(null);
+    clearError();
     setExtracting(true);
 
     try {
@@ -145,29 +189,30 @@ export default function ExtractPdfPage() {
 
     } catch (e: any) {
       console.error("Page Extraction Error:", e);
-      setError(e?.message || t('error'));
+      setErrorType("EXTRACT_ERROR");
+      if (e?.message) setCustomErrorMsg(e.message);
     } finally {
       setExtracting(false);
     }
   };
 
-   const handleDownload = async () => {
-     if (!processedBlob) return;
-     const url = window.URL.createObjectURL(processedBlob);
-     const a = document.createElement("a");
-     a.href = url;
-     a.download = "extracted.pdf";
-     document.body.appendChild(a);
-     a.click();
-     window.URL.revokeObjectURL(url);
-     document.body.removeChild(a);
-   };
+  const handleDownload = async () => {
+    if (!processedBlob) return;
+    const url = window.URL.createObjectURL(processedBlob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "extracted.pdf";
+    document.body.appendChild(a);
+    a.click();
+    window.URL.revokeObjectURL(url);
+    document.body.removeChild(a);
+  };
 
   // --- 2. SAVE OPERATION ---
   const handleSave = async () => {
     if (!processedBlob || !session) return;
     setSaving(true);
-    setError(null);
+    clearError();
     try {
       const safePageRange = pageRange.trim().replace(/[^a-zA-Z0-9-]/g, '_');
       const filename = file?.name.replace('.pdf', `_pages_${safePageRange}.pdf`) || 'extracted.pdf';
@@ -184,7 +229,7 @@ export default function ExtractPdfPage() {
 
     } catch (e: any) {
       console.error("Save Error:", e);
-      setError(e?.message || t('saveError'));
+      setErrorType("SAVE_ERROR");
     } finally {
       setSaving(false);
     }
@@ -194,11 +239,31 @@ export default function ExtractPdfPage() {
     setFile(null);
     setProcessedBlob(null);
     setPageRange("");
-    setError(null);
+    clearError();
   };
 
   const isReady = file && pageRange.trim().length > 0;
   const hasProcessed = processedBlob !== null;
+
+  // ✅ 3. Hata Mesajı Renderlayıcı
+  const getErrorMessage = () => {
+    if (customErrorMsg && (errorType === "CUSTOM" || errorType === "EXTRACT_ERROR")) return customErrorMsg;
+
+    switch (errorType) {
+        case "INVALID_TYPE": return t("invalidFileType");
+        case "SIZE_EXCEEDED": return `${t("fileSizeExceeded")} (Max: ${(maxBytes / (1024 * 1024)).toFixed(0)} MB)`;
+        case "PANEL_ERROR": return t("panelPdfError");
+        case "UPLOAD_FIRST": return t("uploadFirst");
+        case "ENTER_PAGE_RANGE": return t("enterPageRangeError");
+        case "EXTRACT_ERROR": return t("extractionFailed");
+        case "SAVE_ERROR": return t("saveError");
+        default: return null;
+    }
+  };
+
+  const currentError = getErrorMessage();
+
+  
 
   return (
     <main className="min-h-screen p-6 max-w-4xl mx-auto font-bold text-[var(--foreground)]">
@@ -220,7 +285,7 @@ export default function ExtractPdfPage() {
             : "border-[var(--navbar-border)] hover:border-[var(--button-bg)]"
           }`}
       >
-        <input {...getInputProps()} />
+        <input {...getInputProps()} accept="application/pdf" />
         
         <div className="flex flex-col items-center gap-3">
              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-12 h-12 opacity-50">
@@ -319,6 +384,25 @@ export default function ExtractPdfPage() {
         </>
       )}
 
+      {/* ✅ HATA KUTUSU (Dil destekli) */}
+      {currentError && (
+        <div className="error-box mt-6 shadow-sm animate-in fade-in slide-in-from-top-2 duration-300">
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 24 24"
+            fill="currentColor"
+            className="w-5 h-5 shrink-0"
+          >
+            <path
+              fillRule="evenodd"
+              d="M9.401 3.003c1.155-2 4.043-2 5.197 0l7.355 12.748c1.154 2-.29 4.5-2.599 4.5H4.645c-2.309 0-3.752-2.5-2.598-4.5L9.4 3.003zM12 8.25a.75.75 0 01.75.75v3.75a.75.75 0 01-1.5 0V9a.75.75 0 01.75-.75zm0 8.25a.75.75 0 100-1.5.75.75 0 000 1.5z"
+              clipRule="evenodd"
+            />
+          </svg>
+          <span>{currentError}</span>
+        </div>
+      )}
+
       {/* Result */}
       {hasProcessed && processedBlob && (
         <div className="mt-6 space-y-6">
@@ -380,26 +464,6 @@ export default function ExtractPdfPage() {
           </div>
         </div>
       )}
-
-      {error && (
-        <div className="error-box mt-6 shadow-sm">
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            viewBox="0 0 24 24"
-            fill="currentColor"
-            className="w-5 h-5 shrink-0"
-          >
-            <path
-              fillRule="evenodd"
-              d="M9.401 3.003c1.155-2 4.043-2 5.197 0l7.355 12.748c1.154 2-.29 4.5-2.599 4.5H4.645c-2.309 0-3.752-2.5-2.598-4.5L9.4 3.003zM12 8.25a.75.75 0 01.75.75v3.75a.75.75 0 01-1.5 0V9a.75.75 0 01.75-.75zm0 8.25a.75.75 0 100-1.5.75.75 0 000 1.5z"
-              clipRule="evenodd"
-            />
-          </svg>
-
-          <span>{error}</span>
-        </div>
-      )}
-
 
       <UsageLimitModal
         isOpen={showLimitModal}
